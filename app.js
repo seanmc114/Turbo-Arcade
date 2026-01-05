@@ -6,7 +6,20 @@
   "use strict";
 
   // ============================================================
-  // OPTIONAL ONLINE (Firebase Firestore)
+  //rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /turbo_arcade_simple_v1/{docId} {
+      allow read: if true;
+      allow write: if request.resource.data.name is string
+                   && request.resource.data.name.size() <= 24
+                   && request.resource.data.score is number
+                   && request.resource.data.score > 0
+                   && request.resource.data.score < 2000;
+    }
+  }
+}
+OPTIONAL ONLINE (Firebase Firestore)
   // If you leave this empty, game runs OFFLINE and shows "online off".
   // ============================================================
   const FIREBASE_CONFIG = {

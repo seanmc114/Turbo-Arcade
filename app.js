@@ -1,31 +1,32 @@
-// Turbo Arcade — app.js v6.1 (FULL DROP-IN)
-// Fixes:
-// ✅ Cross-device Class Best + Champion via Firebase Firestore (live updates)
-// ✅ Modes actually differ (Practice / Duel / Pressure / Tower / Heist)
-// ✅ Locked levels by default + Turbo unlock thresholds
-// ✅ Saves only after finishing (no "record without playing")
-// ✅ Back button labels forced visible
+// Turbo Arcade — app.js v6.1 FULL FILE
+// ✅ Modes actually different
+// ✅ Locked levels + Turbo unlock times
+// ✅ Saves only after finishing
+// ✅ Cross-device "Class Best" + "Champion" via Firebase Firestore
 //
-// REQUIREMENT for cross-device:
-// - Create Firebase project + enable Firestore
-// - Paste config into FIREBASE_CONFIG below
-// - Set Firestore rules (see bottom of this message)
+// WHAT YOU DO:
+// 1) Copy/paste THIS ENTIRE FILE into app.js
+// 2) Scroll to FIREBASE CONFIG and paste your config values.
+// 3) Set Firestore rules (I included them below the file in the chat).
 
 (() => {
   "use strict";
 
   // ============================================================
-  // 0) FIREBASE CONFIG — PASTE YOUR CONFIG HERE
+  // 🔥 FIREBASE CONFIG — THIS IS THE ONLY BIT YOU EDIT
+  // Paste your Firebase config values between the quotes.
+  // (Firebase Console → Project Settings → Your Apps → Web App → Config)
   // ============================================================
   const FIREBASE_CONFIG = {
-    // apiKey: "…",
-    // authDomain: "…",
-    // projectId: "…",
-    // storageBucket: "…",
-    // messagingSenderId: "…",
-    // appId: "…"
+    // apiKey: "PASTE_HERE",
+    // authDomain: "PASTE_HERE",
+    // projectId: "PASTE_HERE",
+    // storageBucket: "PASTE_HERE",
+    // messagingSenderId: "PASTE_HERE",
+    // appId: "PASTE_HERE"
   };
 
+  // If you ever want to reset the online leaderboard, change this string
   const FS_NAMESPACE = "turbo_arcade_v1";
 
   // ============================================================
@@ -49,7 +50,7 @@
   function assertDOM() {
     const missing = REQUIRED_IDS.filter(id => !$(id));
     if (missing.length) {
-      alert("Turbo Arcade: index.html IDs don't match app.js.\nMissing:\n" + missing.join("\n"));
+      alert("Turbo Arcade: index.html IDs don't match this script.\nMissing:\n" + missing.join("\n"));
       throw new Error("Missing DOM elements.");
     }
   }
@@ -80,6 +81,7 @@
     { id: 10, name: "Level 10", diff: "Quite difficult" },
   ];
 
+  // Unlock L(n) by beating L(n-1) in ≤ threshold seconds (Practice mode)
   const UNLOCK_BY_LEVEL = {
     1: null,
     2: 90,
@@ -120,7 +122,7 @@
     10:["en cuanto", "dado que", "aun así", "a medida que"],
   };
 
-  // 10 questions per level
+  // 10 Q per level
   const SENTENCES = {
     1: [
       { text: "Quiero té ____ café.", answer: "o", explain: "Choice → <b>o</b>." },
@@ -290,13 +292,13 @@
   }
 
   // ============================================================
-  // 6) Local storage (unlock + personal PB)
+  // 6) Local storage (unlock + PB)
   // ============================================================
   const K = {
-    lastMode: "ta_last_mode_v6",
-    lastLevel: "ta_last_level_v6",
-    unlockedMax: "ta_unlocked_max_v6",
-    best: (modeId, levelId, player) => `ta_best_v6::${modeId}::L${levelId}::${player}`,
+    lastMode: "ta_last_mode_v61",
+    lastLevel: "ta_last_level_v61",
+    unlockedMax: "ta_unlocked_max_v61",
+    best: (modeId, levelId, player) => `ta_best_v61::${modeId}::L${levelId}::${player}`,
   };
 
   function getUnlockedMax() {
@@ -390,7 +392,6 @@
     raf: null,
 
     pressure: { timeLeft: 90, correct: 0, asked: 0, tPrev: null },
-
     duel: { a: null, b: null, seed: null, step: null, aScore: null, bScore: null, aRaw: null, bRaw: null, aPen: null, bPen: null },
 
     remoteClassBest: {},
@@ -416,7 +417,6 @@
     for (const m of MODES) {
       const div = document.createElement("div");
       div.className = "tile";
-      div.dataset.mode = m.id;
       div.innerHTML = `
         <div class="tile-title">
           <span>${m.title}</span>
@@ -456,7 +456,6 @@
   function buildLevelGrid() {
     const grid = $("#levelGrid");
     grid.innerHTML = "";
-
     const unlockedMax = getUnlockedMax();
     const m = modeObj();
 
@@ -465,10 +464,7 @@
       const threshold = UNLOCK_BY_LEVEL[lvl.id];
 
       const btn = document.createElement("button");
-      btn.className = "levelbtn";
-      if (locked) btn.classList.add("locked");
-      btn.dataset.level = String(lvl.id);
-
+      btn.className = "levelbtn" + (locked ? " locked" : "");
       btn.innerHTML = `
         <div class="level-top">
           <div class="level-name">${lvl.name}</div>
@@ -510,12 +506,7 @@
     for (const lvl of LEVELS) {
       const el = $(`#bestLine-${lvl.id}`);
       if (!el) continue;
-
-      if (modeObj().kind === "pressure") {
-        el.textContent = "Your best: —";
-        continue;
-      }
-
+      if (modeObj().kind === "pressure") { el.textContent = "Your best: —"; continue; }
       const best = getBestTime(state.modeId, lvl.id, player);
       el.textContent = `Your best: ${best == null ? "—" : fmtSeconds(best)}`;
     }
@@ -535,7 +526,6 @@
     $("#rowDuelNames").classList.toggle("hidden", !m.usesDuel);
     $("#rowSoloName").classList.toggle("hidden", m.usesDuel);
 
-    // Level picker
     const picker = $("#setupLevelPicker");
     picker.innerHTML = "";
     const unlockedMax = getUnlockedMax();
@@ -563,7 +553,6 @@
       picker.appendChild(b);
     }
 
-    // PB preview only (no saving here)
     $("#soloName").oninput = () => {
       const name = normName($("#soloName").value);
       if (name) refreshBestLinesForPlayer(name);
@@ -575,12 +564,8 @@
   // ============================================================
   // 10) Game engines
   // ============================================================
-  function stopTimer() {
-    cancelAnimationFrame(state.raf);
-    state.raf = null;
-  }
+  function stopTimer() { cancelAnimationFrame(state.raf); state.raf = null; }
 
-  // ----- Classic-like modes (Practice / Tower / Heist) + Duel legs
   function startClassicRun({ playerName, modeId, levelId, seedOverride = null, staged = false, badge = "Stage: Classic" }) {
     state.player = playerName;
     state.modeId = modeId;
@@ -658,7 +643,6 @@
   function submitClassicAnswer(staged) {
     const q = state.items[state.idx];
     const chosen = state.selected;
-
     const ok = normAnswer(chosen) === normAnswer(q.answer);
     if (!ok) state.penalty += 30;
 
@@ -704,7 +688,6 @@
     const raw = (now() - state.t0) / 1000;
     const total = raw + state.penalty;
 
-    // Duel legs are handled separately
     if (state.modeId === "duel") return finishDuelLeg(total, raw, state.penalty);
 
     // Save PB only AFTER finishing
@@ -719,9 +702,10 @@
       maybeUnlockNextLevel(state.levelId, total);
     }
 
-    // Online: update class best always; champion if Tower
+    // Online updates
     if (fb.enabled && state.player) {
       await maybeWriteLowerScore(fsDoc(fsClassBestId(state.modeId, state.levelId)), state.player, total);
+
       if (modeObj().kind === "tower") {
         await maybeWriteLowerScore(fsDoc(fsChampionId(state.modeId, state.levelId)), state.player, total);
       }
@@ -729,7 +713,6 @@
 
     buildLevelGrid();
 
-    // Tower messaging
     if (modeObj().kind === "tower" && fb.enabled) {
       const ch = state.remoteChampion[keyML(state.modeId, state.levelId)];
       const title = (ch && total < ch.score) ? "NEW CHAMPION!" : "Champion Tower — Results";
@@ -740,7 +723,7 @@
     showResultsClassic(total, raw, "Results");
   }
 
-  // ----- Pressure mode
+  // Pressure mode
   function startPressure({ playerName, levelId }) {
     state.player = playerName;
     state.levelId = levelId;
@@ -875,16 +858,12 @@
     showScreen("results");
   }
 
-  // ----- Duel: A then B, same seed
+  // Duel mode
   function startDuel({ nameA, nameB, levelId }) {
     state.duel.a = nameA;
     state.duel.b = nameB;
     state.duel.seed = Math.floor(Math.random() * 1e9);
     state.duel.step = "A";
-
-    state.duel.aScore = state.duel.bScore = null;
-    state.duel.aRaw = state.duel.bRaw = null;
-    state.duel.aPen = state.duel.bPen = null;
 
     startClassicRun({ playerName: nameA, modeId: "duel", levelId, seedOverride: state.duel.seed, staged: false, badge: "Duel: Player A" });
   }
@@ -893,20 +872,15 @@
     showResultsClassic(total, raw, state.duel.step === "A" ? "Player A — leg complete" : "Player B — leg complete");
 
     if (state.duel.step === "A") {
-      state.duel.aScore = total;
-      state.duel.aRaw = raw;
-      state.duel.aPen = pen;
+      state.duel.aScore = total; state.duel.aRaw = raw; state.duel.aPen = pen;
       state.duel.step = "B";
-
       setTimeout(() => {
         startClassicRun({ playerName: state.duel.b, modeId: "duel", levelId: state.levelId, seedOverride: state.duel.seed, staged: false, badge: "Duel: Player B" });
       }, 650);
       return;
     }
 
-    state.duel.bScore = total;
-    state.duel.bRaw = raw;
-    state.duel.bPen = pen;
+    state.duel.bScore = total; state.duel.bRaw = raw; state.duel.bPen = pen;
 
     const a = state.duel.aScore;
     const b = state.duel.bScore;
@@ -916,17 +890,7 @@
     if (a < b) { winner = state.duel.a; winScore = a; }
     else if (b < a) { winner = state.duel.b; winScore = b; }
 
-    // Local PB updates after duel ends
-    if (state.duel.a) {
-      const prevA = getBestTime("duel", state.levelId, state.duel.a);
-      if (prevA == null || a < prevA) setBestTime("duel", state.levelId, state.duel.a, a);
-    }
-    if (state.duel.b) {
-      const prevB = getBestTime("duel", state.levelId, state.duel.b);
-      if (prevB == null || b < prevB) setBestTime("duel", state.levelId, state.duel.b, b);
-    }
-
-    // Online: winner may update champion + class best for duel
+    // Online updates (duel champion + duel class best)
     if (fb.enabled && winner !== "Tie") {
       await maybeWriteLowerScore(fsDoc(fsChampionId("duel", state.levelId)), winner, winScore);
       await maybeWriteLowerScore(fsDoc(fsClassBestId("duel", state.levelId)), winner, winScore);
@@ -934,37 +898,23 @@
 
     $("#duelTitle").textContent = winner === "Tie" ? "Duel — Tie!" : `Duel winner: ${winner}`;
     $("#duelSub").textContent = "Fastest total time wins (penalties included).";
-
-    const grid = $("#duelGrid");
-    grid.innerHTML = "";
-
-    const card = (label, name, totalS, rawS, penS) => {
-      const div = document.createElement("div");
-      div.className = "duelcard";
-      div.innerHTML = `
-        <div class="duelname">${label}: ${escapeHTML(name)}</div>
-        <div class="duelscore">${fmtSeconds(totalS)}</div>
-        <div class="duelsmall">Base: ${fmtSeconds(rawS)} • Penalty: ${penS}s</div>
-      `;
-      return div;
-    };
-
-    grid.appendChild(card("Player A", state.duel.a, a, state.duel.aRaw, state.duel.aPen));
-    grid.appendChild(card("Player B", state.duel.b, b, state.duel.bRaw, state.duel.bPen));
+    $("#duelGrid").innerHTML = `
+      <div class="duelcard"><div class="duelname">Player A: ${escapeHTML(state.duel.a)}</div><div class="duelscore">${fmtSeconds(a)}</div></div>
+      <div class="duelcard"><div class="duelname">Player B: ${escapeHTML(state.duel.b)}</div><div class="duelscore">${fmtSeconds(b)}</div></div>
+    `;
 
     buildLevelGrid();
     showScreen("duel");
   }
 
   // ============================================================
-  // 12) Buttons
+  // 11) Buttons
   // ============================================================
   function wireButtons() {
     $("#btnBackHome1").addEventListener("click", () => showScreen("home"));
     $("#btnBackHome2").addEventListener("click", () => showScreen("home"));
     $("#btnBackHome3").addEventListener("click", () => showScreen("home"));
     $("#btnDuelNext").addEventListener("click", () => showScreen("home"));
-
     $("#btnQuit").addEventListener("click", () => { stopTimer(); showScreen("home"); });
 
     $("#btnNext").addEventListener("click", () => {
@@ -986,24 +936,17 @@
         const b = normName($("#duelNameB").value) || "Player B";
         return startDuel({ nameA: a, nameB: b, levelId: state.levelId });
       }
-
       const name = normName($("#soloName").value) || "Player";
       state.player = name;
       refreshBestLinesForPlayer(name);
 
       if (m.kind === "pressure") return startPressure({ playerName: name, levelId: state.levelId });
 
-      return startClassicRun({
-        playerName: name,
-        modeId: state.modeId,
-        levelId: state.levelId,
-        staged: (m.kind === "heist"),
-        badge: m.kind === "tower" ? "Stage: Tower" : (m.kind === "heist" ? "Stage: 1/3" : "Stage: Classic")
-      });
+      return startClassicRun({ playerName: name, modeId: state.modeId, levelId: state.levelId, staged: (m.kind === "heist"), badge: m.kind === "tower" ? "Stage: Tower" : "Stage: Classic" });
     });
 
     $("#btnResetAll").addEventListener("click", () => {
-      Object.keys(localStorage).forEach(k => { if (k.startsWith("ta_best_v6::") || k.startsWith("ta_")) localStorage.removeItem(k); });
+      Object.keys(localStorage).forEach(k => { if (k.startsWith("ta_best_v61::") || k.startsWith("ta_")) localStorage.removeItem(k); });
       setUnlockedMax(1);
       buildLevelGrid();
       alert("Local PBs + unlocks cleared on this device.\nOnline Class Best/Champion remains.");
@@ -1011,11 +954,10 @@
   }
 
   // ============================================================
-  // 13) Firestore listeners (live updates)
+  // 12) Firestore listeners
   // ============================================================
   function attachFirestoreListeners() {
     if (!fb.enabled) return;
-
     for (const m of MODES) {
       for (const lvl of LEVELS) {
         fb.onSnapshot(fsDoc(fsClassBestId(m.id, lvl.id)), (snap) => {
@@ -1042,7 +984,7 @@
   }
 
   // ============================================================
-  // 14) Init
+  // 13) Init
   // ============================================================
   function restoreDefaults() {
     const lastMode = localStorage.getItem(K.lastMode);

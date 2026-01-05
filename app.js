@@ -1,87 +1,67 @@
-// Turbo Arcade — app.js v6.1 FULL FILE
-// ✅ Modes actually different
-// ✅ Locked levels + Turbo unlock times
-// ✅ Saves only after finishing
-// ✅ Cross-device "Class Best" + "Champion" via Firebase Firestore
+// Turbo Arcade — SIMPLE WORKING GAME (Practice only)
+// ✅ 10 levels, 10 Q each
+// ✅ 30s penalty per mistake
+// ✅ Local PB per level
+// ✅ Locked levels + unlock by time thresholds
+// ✅ Results + feedback
 //
-// WHAT YOU DO:
-// 1) Copy/paste THIS ENTIRE FILE into app.js
-// 2) Scroll to FIREBASE CONFIG and paste your config values.
-// 3) Set Firestore rules (I included them below the file in the chat).
+// No Firebase. No modes. Just works on GitHub Pages.
 
 (() => {
   "use strict";
 
-  // ============================================================
-  // 🔥 FIREBASE CONFIG — THIS IS THE ONLY BIT YOU EDIT
-  // Paste your Firebase config values between the quotes.
-  // (Firebase Console → Project Settings → Your Apps → Web App → Config)
-  // ============================================================
-  const FIREBASE_CONFIG = {
-    // apiKey: "PASTE_HERE",
-    // authDomain: "PASTE_HERE",
-    // projectId: "PASTE_HERE",
-    // storageBucket: "PASTE_HERE",
-    // messagingSenderId: "PASTE_HERE",
-    // appId: "PASTE_HERE"
-  };
-
-  // If you ever want to reset the online leaderboard, change this string
-  const FS_NAMESPACE = "turbo_arcade_v1";
-
-  // ============================================================
-  // 1) DOM helpers
-  // ============================================================
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
+  // ---- expected IDs (matches your existing arcade layout)
   const REQUIRED_IDS = [
-    "#screenHome", "#screenSetup", "#screenGame", "#screenResults", "#screenDuel",
+    "#screenHome", "#screenSetup", "#screenGame", "#screenResults",
     "#modeTiles", "#levelGrid", "#btnResetAll",
-    "#setupTitle", "#setupSub", "#rowSoloName", "#soloName", "#rowDuelNames", "#duelNameA", "#duelNameB",
-    "#setupLevelPicker", "#btnStart", "#btnBackHome1",
-    "#badgeStage", "#badgePlayer", "#timer", "#penalty", "#qcount", "#qdiff", "#prompt", "#options",
-    "#btnNext", "#btnQuit", "#microHint",
-    "#resultsTitle", "#resultsSub", "#scoreBig", "#scoreMeta", "#btnPlayAgain", "#btnBackHome2", "#feedback",
-    "#duelTitle", "#duelSub", "#duelGrid", "#btnDuelNext", "#btnBackHome3",
+    "#setupTitle", "#setupSub", "#rowSoloName", "#soloName",
+    "#rowDuelNames", "#setupLevelPicker",
+    "#btnStart", "#btnBackHome1",
+    "#badgeStage", "#badgePlayer", "#timer", "#penalty", "#qcount", "#qdiff",
+    "#prompt", "#options", "#btnNext", "#btnQuit", "#microHint",
+    "#resultsTitle", "#resultsSub", "#scoreBig", "#scoreMeta",
+    "#btnPlayAgain", "#btnBackHome2", "#feedback",
     "#pillMode", "#pillLevel"
   ];
 
   function assertDOM() {
     const missing = REQUIRED_IDS.filter(id => !$(id));
     if (missing.length) {
-      alert("Turbo Arcade: index.html IDs don't match this script.\nMissing:\n" + missing.join("\n"));
-      throw new Error("Missing DOM elements.");
+      alert("Missing elements in index.html:\n" + missing.join("\n"));
+      throw new Error("DOM mismatch");
     }
   }
 
-  function forceButtonLabels() {
-    $("#btnBackHome1").textContent = "Back";
-    $("#btnBackHome2").textContent = "Back";
-    $("#btnBackHome3").textContent = "Back";
-    $("#btnQuit").textContent = "Quit";
-    $("#btnDuelNext").textContent = "Back to Arcade";
-    $("#btnStart").textContent = "Start";
-    $("#btnPlayAgain").textContent = "Play again";
+  // ---- screens
+  const screens = {};
+  function cacheScreens() {
+    screens.home = $("#screenHome");
+    screens.setup = $("#screenSetup");
+    screens.game = $("#screenGame");
+    screens.results = $("#screenResults");
+  }
+  function showScreen(which) {
+    Object.entries(screens).forEach(([k, el]) => el.classList.toggle("hidden", k !== which));
   }
 
-  // ============================================================
-  // 2) Levels + unlock thresholds
-  // ============================================================
+  // ---- levels + unlock thresholds (Turbo style)
   const LEVELS = [
-    { id: 1, name: "Level 1", diff: "Very easy" },
-    { id: 2, name: "Level 2", diff: "Easy" },
-    { id: 3, name: "Level 3", diff: "Easy+" },
-    { id: 4, name: "Level 4", diff: "Medium" },
-    { id: 5, name: "Level 5", diff: "Medium+" },
-    { id: 6, name: "Level 6", diff: "Hard-ish" },
-    { id: 7, name: "Level 7", diff: "Hard" },
-    { id: 8, name: "Level 8", diff: "Hard+" },
-    { id: 9, name: "Level 9", diff: "Quite hard" },
-    { id: 10, name: "Level 10", diff: "Quite difficult" },
+    { id: 1, diff: "Very easy" },
+    { id: 2, diff: "Easy" },
+    { id: 3, diff: "Easy+" },
+    { id: 4, diff: "Medium" },
+    { id: 5, diff: "Medium+" },
+    { id: 6, diff: "Hard-ish" },
+    { id: 7, diff: "Hard" },
+    { id: 8, diff: "Hard+" },
+    { id: 9, diff: "Quite hard" },
+    { id: 10, diff: "Quite difficult" },
   ];
 
-  // Unlock L(n) by beating L(n-1) in ≤ threshold seconds (Practice mode)
+  // Unlock Level N by beating Level N-1 within this time
   const UNLOCK_BY_LEVEL = {
     1: null,
     2: 90,
@@ -95,20 +75,7 @@
     10: 50,
   };
 
-  // ============================================================
-  // 3) Modes — genuinely different
-  // ============================================================
-  const MODES = [
-    { id: "practice", title: "Practice", tag: "PB saver", kind: "classic", usesDuel: false, usesChampion: false },
-    { id: "duel", title: "Turbo Duel", tag: "Head-to-head", kind: "duel", usesDuel: true, usesChampion: true },
-    { id: "pressure", title: "Pressure Cooker", tag: "Survival", kind: "pressure", usesDuel: false, usesChampion: false },
-    { id: "tower", title: "Champion Tower", tag: "Dethrone", kind: "tower", usesDuel: false, usesChampion: true },
-    { id: "heist", title: "Language Heist", tag: "Mission", kind: "heist", usesDuel: false, usesChampion: false },
-  ];
-
-  // ============================================================
-  // 4) Content — Connectors
-  // ============================================================
+  // ---- connectors pool per level
   const CONNECTORS = {
     1: ["y", "o", "pero"],
     2: ["porque", "también", "además", "sin"],
@@ -119,514 +86,318 @@
     7: ["no obstante", "sin duda", "por un lado", "por otro lado"],
     8: ["siempre que", "con tal de que", "a menos que", "de repente"],
     9: ["de modo que", "de manera que", "a fin de", "consecuentemente"],
-    10:["en cuanto", "dado que", "aun así", "a medida que"],
+    10: ["en cuanto", "dado que", "aun así", "a medida que"],
   };
 
-  // 10 Q per level
+  // ---- 10 Q per level
   const SENTENCES = {
     1: [
-      { text: "Quiero té ____ café.", answer: "o", explain: "Choice → <b>o</b>." },
-      { text: "Tengo un lápiz ____ un bolígrafo.", answer: "y", explain: "Addition → <b>y</b>." },
-      { text: "Estudio, ____ estoy cansado.", answer: "pero", explain: "Contrast → <b>pero</b>." },
-      { text: "Es simpático ____ divertido.", answer: "y", explain: "Adding → <b>y</b>." },
-      { text: "¿Quieres ir ____ quedarte en casa?", answer: "o", explain: "Alternative → <b>o</b>." },
-      { text: "Me gusta el fútbol, ____ prefiero el baloncesto.", answer: "pero", explain: "Contrast → <b>pero</b>." },
-      { text: "Trabajo ____ estudio por las tardes.", answer: "y", explain: "Two actions → <b>y</b>." },
-      { text: "Podemos caminar ____ tomar el bus.", answer: "o", explain: "Either/or → <b>o</b>." },
-      { text: "Quiero salir, ____ está lloviendo.", answer: "pero", explain: "But → <b>pero</b>." },
-      { text: "Compro pan ____ leche.", answer: "y", explain: "List → <b>y</b>." },
+      { text: "Quiero té ____ café.", a: "o" },
+      { text: "Tengo un lápiz ____ un bolígrafo.", a: "y" },
+      { text: "Estudio, ____ estoy cansado.", a: "pero" },
+      { text: "Es simpático ____ divertido.", a: "y" },
+      { text: "¿Quieres ir ____ quedarte en casa?", a: "o" },
+      { text: "Me gusta el fútbol, ____ prefiero el baloncesto.", a: "pero" },
+      { text: "Trabajo ____ estudio por las tardes.", a: "y" },
+      { text: "Podemos caminar ____ tomar el bus.", a: "o" },
+      { text: "Quiero salir, ____ está lloviendo.", a: "pero" },
+      { text: "Compro pan ____ leche.", a: "y" },
     ],
     2: [
-      { text: "No salgo ____ tengo deberes.", answer: "porque", explain: "Reason → <b>porque</b>." },
-      { text: "Voy al cine; ____ voy a cenar.", answer: "también", explain: "Also → <b>también</b>." },
-      { text: "Quiero estudiar; ____ quiero practicar.", answer: "además", explain: "In addition → <b>además</b>." },
-      { text: "Lo hago ____ prisa.", answer: "sin", explain: "Without → <b>sin</b>." },
-      { text: "Estoy feliz ____ es viernes.", answer: "porque", explain: "Cause → <b>porque</b>." },
-      { text: "Ella canta; ____ baila.", answer: "también", explain: "Also → <b>también</b>." },
-      { text: "Es caro; ____ es buenísimo.", answer: "además", explain: "Plus → <b>además</b>." },
-      { text: "Salimos ____ dinero.", answer: "sin", explain: "Without → <b>sin</b>." },
-      { text: "No lo compro ____ no lo necesito.", answer: "porque", explain: "Reason → <b>porque</b>." },
-      { text: "Tengo hambre; ____ estoy cansado.", answer: "además", explain: "Another point → <b>además</b>." },
+      { text: "No salgo ____ tengo deberes.", a: "porque" },
+      { text: "Voy al cine; ____ voy a cenar.", a: "también" },
+      { text: "Quiero estudiar; ____ quiero practicar.", a: "además" },
+      { text: "Lo hago ____ prisa.", a: "sin" },
+      { text: "Estoy feliz ____ es viernes.", a: "porque" },
+      { text: "Ella canta; ____ baila.", a: "también" },
+      { text: "Es caro; ____ es buenísimo.", a: "además" },
+      { text: "Salimos ____ dinero.", a: "sin" },
+      { text: "No lo compro ____ no lo necesito.", a: "porque" },
+      { text: "Tengo hambre; ____ estoy cansado.", a: "además" },
     ],
     3: [
-      { text: "Terminé la tarea; ____ puedo descansar.", answer: "entonces", explain: "So → <b>entonces</b>." },
-      { text: "Está nublado, ____ no vamos a la playa.", answer: "así que", explain: "Result → <b>así que</b>." },
-      { text: "Perdí el bus; ____ llegué tarde.", answer: "por eso", explain: "That’s why → <b>por eso</b>." },
-      { text: "Comimos y ____ fuimos al parque.", answer: "luego", explain: "Afterwards → <b>luego</b>." },
-      { text: "No estudió, ____ suspendió.", answer: "por eso", explain: "Reason→result → <b>por eso</b>." },
-      { text: "Estaba enfermo, ____ se quedó en casa.", answer: "así que", explain: "So → <b>así que</b>." },
-      { text: "No tengo clase; ____ voy a entrenar.", answer: "entonces", explain: "So → <b>entonces</b>." },
-      { text: "Hicimos la compra y ____ cocinamos.", answer: "luego", explain: "Then → <b>luego</b>." },
-      { text: "No había sitio; ____ cambiamos de plan.", answer: "entonces", explain: "So → <b>entonces</b>." },
-      { text: "Quería dormir; ____ apagué el móvil.", answer: "así que", explain: "So → <b>así que</b>." },
+      { text: "Terminé la tarea; ____ puedo descansar.", a: "entonces" },
+      { text: "Está nublado, ____ no vamos a la playa.", a: "así que" },
+      { text: "Perdí el bus; ____ llegué tarde.", a: "por eso" },
+      { text: "Comimos y ____ fuimos al parque.", a: "luego" },
+      { text: "No estudió, ____ suspendió.", a: "por eso" },
+      { text: "Estaba enfermo, ____ se quedó en casa.", a: "así que" },
+      { text: "No tengo clase; ____ voy a entrenar.", a: "entonces" },
+      { text: "Hicimos la compra y ____ cocinamos.", a: "luego" },
+      { text: "No había sitio; ____ cambiamos de plan.", a: "entonces" },
+      { text: "Quería dormir; ____ apagué el móvil.", a: "así que" },
     ],
     4: [
-      { text: "Quiero ir; ____ está lloviendo.", answer: "sin embargo", explain: "However → <b>sin embargo</b>." },
-      { text: "Yo estudio; mi hermano, ____ , juega.", answer: "en cambio", explain: "In contrast → <b>en cambio</b>." },
-      { text: "No es caro, ____ barato.", answer: "sino", explain: "Not X but Y → <b>sino</b>." },
-      { text: "Voy, ____ no tengo tiempo.", answer: "aunque", explain: "Even though → <b>aunque</b>." },
-      { text: "Me gusta; ____ prefiero otro.", answer: "sin embargo", explain: "However → <b>sin embargo</b>." },
-      { text: "Yo voy en bus; tú, ____ , vas andando.", answer: "en cambio", explain: "Contrast → <b>en cambio</b>." },
-      { text: "No quiero té, ____ café.", answer: "sino", explain: "Correction → <b>sino</b>." },
-      { text: "Salgo ____ esté cansado.", answer: "aunque", explain: "Even if/though → <b>aunque</b>." },
-      { text: "Es difícil; ____ lo intento.", answer: "sin embargo", explain: "However → <b>sin embargo</b>." },
-      { text: "No es feo, ____ raro.", answer: "sino", explain: "Not X but Y → <b>sino</b>." },
+      { text: "Quiero ir; ____ está lloviendo.", a: "sin embargo" },
+      { text: "Yo estudio; mi hermano, ____ , juega.", a: "en cambio" },
+      { text: "No es caro, ____ barato.", a: "sino" },
+      { text: "Voy, ____ no tengo tiempo.", a: "aunque" },
+      { text: "Me gusta; ____ prefiero otro.", a: "sin embargo" },
+      { text: "Yo voy en bus; tú, ____ , vas andando.", a: "en cambio" },
+      { text: "No quiero té, ____ café.", a: "sino" },
+      { text: "Salgo ____ esté cansado.", a: "aunque" },
+      { text: "Es difícil; ____ lo intento.", a: "sin embargo" },
+      { text: "No es feo, ____ raro.", a: "sino" },
     ],
     5: [
-      { text: "Te llamo ____ llegue a casa.", answer: "cuando", explain: "When → <b>cuando</b>." },
-      { text: "Leo ____ como.", answer: "mientras", explain: "While → <b>mientras</b>." },
-      { text: "____ salir, termino la tarea.", answer: "antes de", explain: "Before → <b>antes de</b>." },
-      { text: "____ cenar, vemos una serie.", answer: "después de", explain: "After → <b>después de</b>." },
-      { text: "Me ducho ____ entrenar.", answer: "después de", explain: "After → <b>después de</b>." },
-      { text: "____ dormir, apago la luz.", answer: "antes de", explain: "Before → <b>antes de</b>." },
-      { text: "Voy al parque ____ hace sol.", answer: "cuando", explain: "When → <b>cuando</b>." },
-      { text: "Escucho música ____ estudio.", answer: "mientras", explain: "While → <b>mientras</b>." },
-      { text: "____ comer, lavo las manos.", answer: "antes de", explain: "Before → <b>antes de</b>." },
-      { text: "____ clase, entrenamos.", answer: "después de", explain: "After → <b>después de</b>." },
+      { text: "Te llamo ____ llegue a casa.", a: "cuando" },
+      { text: "Leo ____ como.", a: "mientras" },
+      { text: "____ salir, termino la tarea.", a: "antes de" },
+      { text: "____ cenar, vemos una serie.", a: "después de" },
+      { text: "Me ducho ____ entrenar.", a: "después de" },
+      { text: "____ dormir, apago la luz.", a: "antes de" },
+      { text: "Voy al parque ____ hace sol.", a: "cuando" },
+      { text: "Escucho música ____ estudio.", a: "mientras" },
+      { text: "____ comer, lavo las manos.", a: "antes de" },
+      { text: "____ clase, entrenamos.", a: "después de" },
     ],
     6: [
-      { text: "No voy ____ estoy enfermo.", answer: "ya que", explain: "Since → <b>ya que</b>." },
-      { text: "No salimos ____ llueve.", answer: "puesto que", explain: "Since → <b>puesto que</b>." },
-      { text: "Lo intento ____ el problema.", answer: "a pesar de", explain: "Despite → <b>a pesar de</b>." },
-      { text: "Estudio; ____ saco mejores notas.", answer: "por lo tanto", explain: "Therefore → <b>por lo tanto</b>." },
-      { text: "Me quedo en casa ____ no hay tiempo.", answer: "ya que", explain: "Reason → <b>ya que</b>." },
-      { text: "No lo hago ____ es peligroso.", answer: "puesto que", explain: "Reason → <b>puesto que</b>." },
-      { text: "Voy ____ el cansancio.", answer: "a pesar de", explain: "Despite → <b>a pesar de</b>." },
-      { text: "Estoy preparado; ____ no tengo miedo.", answer: "por lo tanto", explain: "Therefore → <b>por lo tanto</b>." },
-      { text: "No me gusta; ____ lo respeto.", answer: "a pesar de", explain: "Despite → <b>a pesar de</b>." },
-      { text: "No estudió; ____ suspendió.", answer: "por lo tanto", explain: "Therefore → <b>por lo tanto</b>." },
+      { text: "No voy ____ estoy enfermo.", a: "ya que" },
+      { text: "No salimos ____ llueve.", a: "puesto que" },
+      { text: "Lo intento ____ el problema.", a: "a pesar de" },
+      { text: "Estudio; ____ saco mejores notas.", a: "por lo tanto" },
+      { text: "Me quedo en casa ____ no hay tiempo.", a: "ya que" },
+      { text: "No lo hago ____ es peligroso.", a: "puesto que" },
+      { text: "Voy ____ el cansancio.", a: "a pesar de" },
+      { text: "Estoy preparado; ____ no tengo miedo.", a: "por lo tanto" },
+      { text: "No me gusta; ____ lo respeto.", a: "a pesar de" },
+      { text: "No estudió; ____ suspendió.", a: "por lo tanto" },
     ],
     7: [
-      { text: "____ , el plan es bueno.", answer: "sin duda", explain: "Emphasis → <b>sin duda</b>." },
-      { text: "____ , es útil; ____ , es caro.", answer: "por un lado", explain: "First side → <b>por un lado</b>." },
-      { text: "____ , es útil; ____ , es caro.", answer: "por otro lado", explain: "Second side → <b>por otro lado</b>." },
-      { text: "Quería ir; ____ no tenía tiempo.", answer: "no obstante", explain: "Nevertheless → <b>no obstante</b>." },
-      { text: "Está lejos; ____ lo hacemos.", answer: "no obstante", explain: "Nevertheless → <b>no obstante</b>." },
-      { text: "____ , vale la pena.", answer: "sin duda", explain: "No doubt → <b>sin duda</b>." },
-      { text: "____ , es divertido; ____ , es cansado.", answer: "por un lado", explain: "First side → <b>por un lado</b>." },
-      { text: "____ , es divertido; ____ , es cansado.", answer: "por otro lado", explain: "Second side → <b>por otro lado</b>." },
-      { text: "Me dolía la pierna; ____ seguí.", answer: "no obstante", explain: "Nevertheless → <b>no obstante</b>." },
-      { text: "____ , lo haré.", answer: "sin duda", explain: "Emphasis → <b>sin duda</b>." },
+      { text: "____ , el plan es bueno.", a: "sin duda" },
+      { text: "____ , es útil; ____ , es caro.", a: "por un lado" },
+      { text: "____ , es útil; ____ , es caro.", a: "por otro lado" },
+      { text: "Quería ir; ____ no tenía tiempo.", a: "no obstante" },
+      { text: "Está lejos; ____ lo hacemos.", a: "no obstante" },
+      { text: "____ , vale la pena.", a: "sin duda" },
+      { text: "____ , es divertido; ____ , es cansado.", a: "por un lado" },
+      { text: "____ , es divertido; ____ , es cansado.", a: "por otro lado" },
+      { text: "Me dolía la pierna; ____ seguí.", a: "no obstante" },
+      { text: "____ , lo haré.", a: "sin duda" },
     ],
     8: [
-      { text: "Voy contigo ____ me esperes.", answer: "con tal de que", explain: "Condition → <b>con tal de que</b>." },
-      { text: "Iré ____ termine pronto.", answer: "siempre que", explain: "Provided → <b>siempre que</b>." },
-      { text: "No salgo ____ llueva.", answer: "a menos que", explain: "Unless → <b>a menos que</b>." },
-      { text: "Estaba tranquilo y ____ empezó a gritar.", answer: "de repente", explain: "Suddenly → <b>de repente</b>." },
-      { text: "Te ayudo ____ tú también ayudes.", answer: "con tal de que", explain: "Condition → <b>con tal de que</b>." },
-      { text: "Salimos ____ no haya exámenes.", answer: "siempre que", explain: "Condition → <b>siempre que</b>." },
-      { text: "No lo hago ____ sea obligatorio.", answer: "a menos que", explain: "Unless → <b>a menos que</b>." },
-      { text: "Íbamos bien y ____ todo cambió.", answer: "de repente", explain: "Suddenly → <b>de repente</b>." },
-      { text: "Lo compro ____ sea barato.", answer: "siempre que", explain: "Provided → <b>siempre que</b>." },
-      { text: "No voy ____ me llamen.", answer: "a menos que", explain: "Unless → <b>a menos que</b>." },
+      { text: "Voy contigo ____ me esperes.", a: "con tal de que" },
+      { text: "Iré ____ termine pronto.", a: "siempre que" },
+      { text: "No salgo ____ llueva.", a: "a menos que" },
+      { text: "Estaba tranquilo y ____ empezó a gritar.", a: "de repente" },
+      { text: "Te ayudo ____ tú también ayudes.", a: "con tal de que" },
+      { text: "Salimos ____ no haya exámenes.", a: "siempre que" },
+      { text: "No lo hago ____ sea obligatorio.", a: "a menos que" },
+      { text: "Íbamos bien y ____ todo cambió.", a: "de repente" },
+      { text: "Lo compro ____ sea barato.", a: "siempre que" },
+      { text: "No voy ____ me llamen.", a: "a menos que" },
     ],
     9: [
-      { text: "Hablo claro ____ entiendas.", answer: "de modo que", explain: "So that → <b>de modo que</b>." },
-      { text: "Lo repito ____ no haya dudas.", answer: "de manera que", explain: "So that → <b>de manera que</b>." },
-      { text: "Trabajo ____ ahorrar dinero.", answer: "a fin de", explain: "In order → <b>a fin de</b>." },
-      { text: "No estudió; ____ suspendió.", answer: "consecuentemente", explain: "Consequently → <b>consecuentemente</b>." },
-      { text: "Hice un resumen ____ fuera más fácil.", answer: "de modo que", explain: "So that → <b>de modo que</b>." },
-      { text: "Organicé el texto ____ se entendiera.", answer: "de manera que", explain: "So that → <b>de manera que</b>." },
-      { text: "Entreno ____ mejorar.", answer: "a fin de", explain: "In order → <b>a fin de</b>." },
-      { text: "Hubo retrasos; ____ llegamos tarde.", answer: "consecuentemente", explain: "Consequently → <b>consecuentemente</b>." },
-      { text: "Habla despacio ____ la sigan.", answer: "de modo que", explain: "So that → <b>de modo que</b>." },
-      { text: "Reduje el ruido ____ se oyera.", answer: "de manera que", explain: "So that → <b>de manera que</b>." },
+      { text: "Hablo claro ____ entiendas.", a: "de modo que" },
+      { text: "Lo repito ____ no haya dudas.", a: "de manera que" },
+      { text: "Trabajo ____ ahorrar dinero.", a: "a fin de" },
+      { text: "No estudió; ____ suspendió.", a: "consecuentemente" },
+      { text: "Hice un resumen ____ fuera más fácil.", a: "de modo que" },
+      { text: "Organicé el texto ____ se entendiera.", a: "de manera que" },
+      { text: "Entreno ____ mejorar.", a: "a fin de" },
+      { text: "Hubo retrasos; ____ llegamos tarde.", a: "consecuentemente" },
+      { text: "Habla despacio ____ la sigan.", a: "de modo que" },
+      { text: "Reduje el ruido ____ se oyera.", a: "de manera que" },
     ],
     10: [
-      { text: "____ lo que dijiste, tienes razón.", answer: "en cuanto", explain: "Regarding → <b>en cuanto</b>." },
-      { text: "No fui ____ estaba enfermo.", answer: "dado que", explain: "Given that → <b>dado que</b>." },
-      { text: "Es caro; ____ lo compro.", answer: "aun así", explain: "Even so → <b>aun así</b>." },
-      { text: "Mejoro ____ practico.", answer: "a medida que", explain: "As → <b>a medida que</b>." },
-      { text: "____ el plan, me gusta.", answer: "en cuanto", explain: "As for → <b>en cuanto</b>." },
-      { text: "No salgo ____ no tengo tiempo.", answer: "dado que", explain: "Given that → <b>dado que</b>." },
-      { text: "No está perfecto; ____ funciona.", answer: "aun así", explain: "Even so → <b>aun así</b>." },
-      { text: "Aprendo ____ leo más.", answer: "a medida que", explain: "As → <b>a medida que</b>." },
-      { text: "____ el examen, estoy listo.", answer: "en cuanto", explain: "As for → <b>en cuanto</b>." },
-      { text: "No vino ____ llovía.", answer: "dado que", explain: "Given that → <b>dado que</b>." },
+      { text: "____ lo que dijiste, tienes razón.", a: "en cuanto" },
+      { text: "No fui ____ estaba enfermo.", a: "dado que" },
+      { text: "Es caro; ____ lo compro.", a: "aun así" },
+      { text: "Mejoro ____ practico.", a: "a medida que" },
+      { text: "____ el plan, me gusta.", a: "en cuanto" },
+      { text: "No salgo ____ no tengo tiempo.", a: "dado que" },
+      { text: "No está perfecto; ____ funciona.", a: "aun así" },
+      { text: "Aprendo ____ leo más.", a: "a medida que" },
+      { text: "____ el examen, estoy listo.", a: "en cuanto" },
+      { text: "No vino ____ llovía.", a: "dado que" },
     ],
   };
 
-  // ============================================================
-  // 5) Utilities
-  // ============================================================
-  const now = () => performance.now();
-  const clamp = (n, a, b) => Math.max(a, Math.min(b, n));
-  const normName = (s) => (s || "").trim().replace(/\s+/g, " ").slice(0, 24);
-  const normAnswer = (s) => (s || "").trim().toLowerCase();
-  const fmtSeconds = (sec) => `${(Math.round(sec * 10) / 10).toFixed(1)}s`;
-  function escapeHTML(s) {
-    return (s || "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[c]));
+  // ---- local keys
+  const KEY = {
+    unlockedMax: "TA_unlockMax_simple_v1",
+    pb: (levelId) => `TA_PB_simple_v1_L${levelId}`,
+  };
+
+  function fmt(sec) {
+    return `${(Math.round(sec * 10) / 10).toFixed(1)}s`;
   }
-  function mulberry32(seed) {
-    let t = seed >>> 0;
-    return function() {
-      t += 0x6D2B79F5;
-      let r = Math.imul(t ^ (t >>> 15), 1 | t);
-      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
-      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
-    };
-  }
-  function pick10Items(levelId, seed) {
-    const pool = (SENTENCES[levelId] || []).slice();
-    const rnd = mulberry32(seed);
-    const idxs = pool.map((_, i) => i);
-    for (let i = idxs.length - 1; i > 0; i--) {
-      const j = Math.floor(rnd() * (i + 1));
-      [idxs[i], idxs[j]] = [idxs[j], idxs[i]];
-    }
-    return idxs.slice(0, 10).map(i => pool[i]);
-  }
-  function makeOptions(levelId, correct, rnd) {
-    const pool = Array.from(new Set([...(CONNECTORS[levelId] || []), ...Object.values(CONNECTORS).flat()]));
-    const opts = new Set([correct]);
-    while (opts.size < 4) {
-      const pick = pool[Math.floor(rnd() * pool.length)];
-      if (pick && pick !== correct) opts.add(pick);
-    }
-    const arr = Array.from(opts);
+  function shuffle(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(rnd() * (i + 1));
+      const j = Math.floor(Math.random() * (i + 1));
       [arr[i], arr[j]] = [arr[j], arr[i]];
     }
     return arr;
   }
 
-  // ============================================================
-  // 6) Local storage (unlock + PB)
-  // ============================================================
-  const K = {
-    lastMode: "ta_last_mode_v61",
-    lastLevel: "ta_last_level_v61",
-    unlockedMax: "ta_unlocked_max_v61",
-    best: (modeId, levelId, player) => `ta_best_v61::${modeId}::L${levelId}::${player}`,
-  };
-
   function getUnlockedMax() {
-    const n = Number(localStorage.getItem(K.unlockedMax));
+    const n = Number(localStorage.getItem(KEY.unlockedMax));
     return Number.isFinite(n) ? n : 1;
   }
-  function setUnlockedMax(n) { localStorage.setItem(K.unlockedMax, String(n)); }
-  function maybeUnlockNextLevel(currentLevel, scoreSeconds) {
-    const next = currentLevel + 1;
-    if (next > 10) return;
-    const threshold = UNLOCK_BY_LEVEL[next];
-    if (threshold == null) return;
-    const unlockedMax = getUnlockedMax();
-    if (next <= unlockedMax) return;
-    if (scoreSeconds <= threshold) setUnlockedMax(next);
+  function setUnlockedMax(n) {
+    localStorage.setItem(KEY.unlockedMax, String(n));
   }
-  function getBestTime(modeId, levelId, player) {
-    const raw = localStorage.getItem(K.best(modeId, levelId, player));
-    if (!raw) return null;
-    const n = Number(raw);
+  function getPB(levelId) {
+    const n = Number(localStorage.getItem(KEY.pb(levelId)));
     return Number.isFinite(n) ? n : null;
   }
-  function setBestTime(modeId, levelId, player, score) {
-    localStorage.setItem(K.best(modeId, levelId, player), String(score));
+  function setPB(levelId, val) {
+    localStorage.setItem(KEY.pb(levelId), String(val));
   }
 
-  // ============================================================
-  // 7) Firebase Firestore (cross-device)
-  // ============================================================
-  let fb = { enabled: false, db: null, doc: null, getDoc: null, setDoc: null, onSnapshot: null, serverTimestamp: null };
-
-  function hasFirebaseConfig() {
-    return FIREBASE_CONFIG && FIREBASE_CONFIG.projectId && FIREBASE_CONFIG.apiKey;
-  }
-
-  async function initFirebaseIfConfigured() {
-    if (!hasFirebaseConfig()) return false;
-
-    const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js");
-    const { getFirestore, doc, getDoc, setDoc, onSnapshot, serverTimestamp } =
-      await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js");
-
-    const app = initializeApp(FIREBASE_CONFIG);
-    const db = getFirestore(app);
-
-    fb = { enabled: true, db, doc, getDoc, setDoc, onSnapshot, serverTimestamp };
-    return true;
-  }
-
-  function fsDoc(id) { return fb.doc(fb.db, FS_NAMESPACE, id); }
-  function fsClassBestId(modeId, levelId) { return `classBest__${modeId}__L${levelId}`; }
-  function fsChampionId(modeId, levelId) { return `champion__${modeId}__L${levelId}`; }
-
-  async function maybeWriteLowerScore(docRef, name, score) {
-    const snap = await fb.getDoc(docRef);
-    const cur = snap.exists() ? snap.data() : null;
-    if (!cur || typeof cur.score !== "number" || score < cur.score) {
-      await fb.setDoc(docRef, { name, score, updatedAt: fb.serverTimestamp() }, { merge: true });
-      return true;
-    }
-    return false;
-  }
-
-  // ============================================================
-  // 8) Screens + state
-  // ============================================================
-  const screens = {};
-  function cacheScreens() {
-    screens.home = $("#screenHome");
-    screens.setup = $("#screenSetup");
-    screens.game = $("#screenGame");
-    screens.results = $("#screenResults");
-    screens.duel = $("#screenDuel");
-  }
-  function showScreen(which) {
-    Object.entries(screens).forEach(([k, el]) => el.classList.toggle("hidden", k !== which));
-  }
-
+  // ---- state
   const state = {
-    modeId: "practice",
     levelId: 1,
-
-    player: null,
-    seed: null,
     items: [],
     idx: 0,
     selected: null,
-    answers: [],
     penalty: 0,
-    t0: null,
+    answers: [],
+    t0: 0,
     raf: null,
-
-    pressure: { timeLeft: 90, correct: 0, asked: 0, tPrev: null },
-    duel: { a: null, b: null, seed: null, step: null, aScore: null, bScore: null, aRaw: null, bRaw: null, aPen: null, bPen: null },
-
-    remoteClassBest: {},
-    remoteChampion: {},
+    playerName: "",
   };
 
-  const keyML = (modeId, levelId) => `${modeId}|${levelId}`;
-  function modeObj() { return MODES.find(m => m.id === state.modeId) || MODES[0]; }
-  function levelObj() { return LEVELS.find(l => l.id === state.levelId) || LEVELS[0]; }
-
-  function updatePills() {
-    $("#pillMode").textContent = `Mode: ${modeObj().title}`;
-    $("#pillLevel").textContent = `Level: ${state.levelId} (${levelObj().diff})`;
+  function stopTimer() {
+    cancelAnimationFrame(state.raf);
+    state.raf = null;
+  }
+  function tickTimer() {
+    const t = (performance.now() - state.t0) / 1000;
+    $("#timer").textContent = fmt(t);
+    $("#penalty").textContent = `+${state.penalty}s`;
+    state.raf = requestAnimationFrame(tickTimer);
   }
 
-  // ============================================================
-  // 9) UI build
-  // ============================================================
+  // ---- build arcade "mode" tiles: just one
   function buildModeTiles() {
     const wrap = $("#modeTiles");
-    wrap.innerHTML = "";
-
-    for (const m of MODES) {
-      const div = document.createElement("div");
-      div.className = "tile";
-      div.innerHTML = `
+    wrap.innerHTML = `
+      <div class="tile" id="onlyPracticeTile">
         <div class="tile-title">
-          <span>${m.title}</span>
-          <span class="tile-tag">${m.tag}</span>
+          <span>Connectors</span>
+          <span class="tile-tag">Practice</span>
         </div>
-        <div class="tile-desc">
-          ${m.kind === "classic" ? "Classic timed run. Unlocks happen here."
-            : m.kind === "duel" ? "A vs B, same questions. Winner can be champion."
-            : m.kind === "pressure" ? "Survival timer. Correct +3s, wrong −30s."
-            : m.kind === "tower" ? "Beat the Champion time to dethrone."
-            : "Staged mission vibe (same scoring)."}
-        </div>
-        <div class="tile-cta">Select →</div>
-      `;
-      div.addEventListener("click", () => {
-        state.modeId = m.id;
-        localStorage.setItem(K.lastMode, state.modeId);
-        updatePills();
-        buildLevelGrid();
-        openSetup();
-      });
-      wrap.appendChild(div);
-    }
-  }
+        <div class="tile-desc">10 questions • +30s per mistake • unlock levels by time</div>
+        <div class="tile-cta">Play →</div>
+      </div>
+    `;
+    $("#onlyPracticeTile").addEventListener("click", () => {
+      openSetup();
+    });
 
-  function remoteClassBestLine(modeId, levelId) {
-    const cb = state.remoteClassBest[keyML(modeId, levelId)];
-    if (!cb) return "—";
-    return `<b>${escapeHTML(cb.name)}</b> — ${fmtSeconds(cb.score)}`;
-  }
-  function remoteChampionLine(modeId, levelId) {
-    const ch = state.remoteChampion[keyML(modeId, levelId)];
-    if (!ch) return "—";
-    return `<b>${escapeHTML(ch.name)}</b> — ${fmtSeconds(ch.score)}`;
+    $("#pillMode").textContent = "Game: Connectors";
   }
 
   function buildLevelGrid() {
     const grid = $("#levelGrid");
     grid.innerHTML = "";
     const unlockedMax = getUnlockedMax();
-    const m = modeObj();
 
-    for (const lvl of LEVELS) {
+    LEVELS.forEach(lvl => {
       const locked = lvl.id > unlockedMax;
       const threshold = UNLOCK_BY_LEVEL[lvl.id];
+
+      const pb = getPB(lvl.id);
 
       const btn = document.createElement("button");
       btn.className = "levelbtn" + (locked ? " locked" : "");
       btn.innerHTML = `
         <div class="level-top">
-          <div class="level-name">${lvl.name}</div>
+          <div class="level-name">Level ${lvl.id}</div>
           <div class="level-diff">${lvl.diff}</div>
         </div>
-
-        <div class="level-champ">
-          ${m.usesChampion
-            ? `Champion: ${fb.enabled ? remoteChampionLine(state.modeId, lvl.id) : "<i>(online off)</i>"}`
-            : `Champion: <b>—</b>`}
-        </div>
-
-        <div class="level-best publicbest">
-          Class Best: ${fb.enabled ? remoteClassBestLine(state.modeId, lvl.id) : "<i>(online off)</i>"}
-        </div>
-
-        <div class="level-best" id="bestLine-${lvl.id}">Your best: —</div>
+        <div class="level-best">Your best: ${pb == null ? "—" : fmt(pb)}</div>
         <div class="lockline">
-          ${locked ? `Locked • unlock: ≤ ${threshold}s (prev level in Practice)` : "Unlocked"}
+          ${locked ? `Locked • unlock: ≤ ${threshold}s (prev level)` : "Unlocked"}
         </div>
       `;
 
       btn.addEventListener("click", () => {
         if (locked) {
-          alert(`Level ${lvl.id} is locked.\nUnlock it by beating Level ${lvl.id - 1} in ≤ ${threshold}s in Practice.`);
+          alert(`Level ${lvl.id} is locked.\nUnlock it by beating Level ${lvl.id - 1} in ≤ ${threshold}s.`);
           return;
         }
         state.levelId = lvl.id;
-        localStorage.setItem(K.lastLevel, String(state.levelId));
-        updatePills();
         openSetup();
       });
 
       grid.appendChild(btn);
-    }
-  }
-
-  function refreshBestLinesForPlayer(player) {
-    for (const lvl of LEVELS) {
-      const el = $(`#bestLine-${lvl.id}`);
-      if (!el) continue;
-      if (modeObj().kind === "pressure") { el.textContent = "Your best: —"; continue; }
-      const best = getBestTime(state.modeId, lvl.id, player);
-      el.textContent = `Your best: ${best == null ? "—" : fmtSeconds(best)}`;
-    }
+    });
   }
 
   function openSetup() {
-    forceButtonLabels();
+    $("#setupTitle").textContent = `Connectors — Level ${state.levelId}`;
+    $("#setupSub").textContent = "Enter your name (optional). Your score saves only after you finish.";
+    $("#rowDuelNames").classList.add("hidden");
+    $("#rowSoloName").classList.remove("hidden");
 
-    const m = modeObj();
-    const lvl = levelObj();
-
-    $("#setupTitle").textContent = `${m.title} — ${lvl.name}`;
-    $("#setupSub").textContent = m.usesDuel
-      ? "Enter two names. Player A goes first, then Player B plays the exact same 10 questions."
-      : "Enter your name (scores save only after you finish).";
-
-    $("#rowDuelNames").classList.toggle("hidden", !m.usesDuel);
-    $("#rowSoloName").classList.toggle("hidden", m.usesDuel);
-
+    // Build level picker
     const picker = $("#setupLevelPicker");
     picker.innerHTML = "";
     const unlockedMax = getUnlockedMax();
-
-    for (const l of LEVELS) {
+    LEVELS.forEach(l => {
       const locked = l.id > unlockedMax;
       const b = document.createElement("button");
       b.className = "segbtn" + (l.id === state.levelId ? " active" : "");
       b.textContent = `L${l.id}`;
       if (locked) b.classList.add("lockedseg");
-
       b.addEventListener("click", () => {
         if (locked) {
           const t = UNLOCK_BY_LEVEL[l.id];
-          alert(`Level ${l.id} is locked.\nUnlock: beat Level ${l.id - 1} in ≤ ${t}s in Practice.`);
+          alert(`Level ${l.id} is locked.\nUnlock: beat Level ${l.id - 1} in ≤ ${t}s.`);
           return;
         }
         state.levelId = l.id;
-        localStorage.setItem(K.lastLevel, String(state.levelId));
         $$(".segbtn").forEach(x => x.classList.toggle("active", x === b));
-        updatePills();
-        $("#setupTitle").textContent = `${m.title} — ${LEVELS.find(z => z.id === state.levelId).name}`;
+        $("#setupTitle").textContent = `Connectors — Level ${state.levelId}`;
       });
-
       picker.appendChild(b);
-    }
-
-    $("#soloName").oninput = () => {
-      const name = normName($("#soloName").value);
-      if (name) refreshBestLinesForPlayer(name);
-    };
+    });
 
     showScreen("setup");
   }
 
-  // ============================================================
-  // 10) Game engines
-  // ============================================================
-  function stopTimer() { cancelAnimationFrame(state.raf); state.raf = null; }
-
-  function startClassicRun({ playerName, modeId, levelId, seedOverride = null, staged = false, badge = "Stage: Classic" }) {
-    state.player = playerName;
-    state.modeId = modeId;
-    state.levelId = levelId;
-
-    state.seed = seedOverride ?? Math.floor(Math.random() * 1e9);
-    const rnd = mulberry32(state.seed);
-
-    state.items = pick10Items(levelId, state.seed).map(it => ({
-      text: it.text,
-      answer: it.answer,
-      explain: it.explain,
-      options: makeOptions(levelId, it.answer, rnd),
-    }));
-
+  function startGame() {
+    state.playerName = ($("#soloName").value || "").trim().slice(0, 24);
+    state.items = shuffle(SENTENCES[state.levelId].slice());
     state.idx = 0;
     state.selected = null;
-    state.answers = [];
     state.penalty = 0;
+    state.answers = [];
 
-    state.t0 = now();
+    $("#badgePlayer").textContent = state.playerName ? `Player: ${state.playerName}` : "Player: —";
+    $("#badgeStage").textContent = "Stage: Practice";
+    $("#microHint").textContent = "Pick the best connector.";
+    $("#qdiff").textContent = LEVELS.find(x => x.id === state.levelId).diff;
+
+    state.t0 = performance.now();
     stopTimer();
-    tickClassicTimer();
+    tickTimer();
 
-    $("#badgePlayer").textContent = `Player: ${playerName || "—"}`;
-    $("#badgeStage").textContent = badge;
-    $("#microHint").innerHTML = staged ? "Mission mode: same scoring. Stay sharp." : "Pick the best connector.";
-
-    renderClassicQ(staged);
+    renderQ();
     showScreen("game");
-    updatePills();
+    $("#pillLevel").textContent = `Level: ${state.levelId}`;
   }
 
-  function tickClassicTimer() {
-    const t = (now() - state.t0) / 1000;
-    $("#timer").textContent = fmtSeconds(t);
-    $("#penalty").textContent = `+${state.penalty}s`;
-    state.raf = requestAnimationFrame(tickClassicTimer);
-  }
-
-  function renderClassicQ(staged) {
+  function renderQ() {
     const q = state.items[state.idx];
-
     $("#qcount").textContent = `Q ${state.idx + 1} / 10`;
-    $("#qdiff").textContent = levelObj().diff;
-
-    if (staged) {
-      const stage = state.idx <= 2 ? 1 : (state.idx <= 6 ? 2 : 3);
-      $("#badgeStage").textContent = `Stage: ${stage}/3`;
-    }
-
     $("#prompt").innerHTML = q.text.replace(
       "____",
       "<span style=\"background:rgba(255,255,0,.25);padding:0 6px;border-radius:10px\">____</span>"
     );
 
+    const pool = CONNECTORS[state.levelId];
+    const opts = new Set([q.a]);
+    while (opts.size < 4) opts.add(pool[Math.floor(Math.random() * pool.length)]);
+    const arr = shuffle(Array.from(opts));
+
     const wrap = $("#options");
     wrap.innerHTML = "";
     state.selected = null;
 
-    q.options.forEach(opt => {
+    arr.forEach(opt => {
       const b = document.createElement("button");
       b.className = "opt";
       b.textContent = opt;
@@ -637,379 +408,101 @@
       wrap.appendChild(b);
     });
 
-    $("#btnNext").textContent = state.idx === 9 ? "Finish" : "Next";
+    $("#btnNext").textContent = (state.idx === 9) ? "Finish" : "Next";
   }
 
-  function submitClassicAnswer(staged) {
+  function next() {
     const q = state.items[state.idx];
-    const chosen = state.selected;
-    const ok = normAnswer(chosen) === normAnswer(q.answer);
+    const chosen = state.selected || "—";
+    const ok = (chosen.toLowerCase() === q.a.toLowerCase());
     if (!ok) state.penalty += 30;
 
-    state.answers.push({ q: q.text, chosen: chosen || "—", correct: q.answer, ok, explain: q.explain });
-
+    state.answers.push({ q: q.text, chosen, correct: q.a, ok });
     state.idx++;
-    if (state.idx >= 10) finishClassicRun(staged);
-    else renderClassicQ(staged);
+
+    if (state.idx >= 10) finish();
+    else renderQ();
   }
 
-  function showResultsClassic(total, raw, titleOverride = "Results") {
+  function finish() {
+    stopTimer();
+    const raw = (performance.now() - state.t0) / 1000;
+    const total = raw + state.penalty;
     const mistakes = state.answers.filter(a => !a.ok).length;
 
-    $("#resultsTitle").textContent = titleOverride;
-    $("#resultsSub").innerHTML =
-      `Base time: <b>${fmtSeconds(raw)}</b> • Mistakes: <b>${mistakes}</b> • Penalty: <b>${state.penalty}s</b>`;
+    $("#resultsTitle").textContent = `Level ${state.levelId} — Results`;
+    $("#resultsSub").innerHTML = `Base: <b>${fmt(raw)}</b> • Mistakes: <b>${mistakes}</b> • Penalty: <b>${state.penalty}s</b>`;
+    $("#scoreBig").textContent = fmt(total);
+    $("#scoreMeta").textContent = state.playerName ? `Player: ${state.playerName}` : "";
 
-    $("#scoreBig").textContent = fmtSeconds(total);
-    $("#scoreMeta").textContent = state.player ? `Player: ${state.player}` : "";
+    // Save PB
+    const prev = getPB(state.levelId);
+    if (prev == null || total < prev) setPB(state.levelId, total);
 
-    const fbWrap = $("#feedback");
-    fbWrap.innerHTML = "";
+    // Unlock next
+    const nextLevel = state.levelId + 1;
+    if (nextLevel <= 10) {
+      const need = UNLOCK_BY_LEVEL[nextLevel];
+      const unlockedMax = getUnlockedMax();
+      if (nextLevel > unlockedMax && total <= need) setUnlockedMax(nextLevel);
+    }
+
+    // Feedback
+    const fb = $("#feedback");
+    fb.innerHTML = "";
     state.answers.forEach((a, i) => {
       const div = document.createElement("div");
       div.className = "feeditem";
       div.innerHTML = `
         <div class="feedtop">
           <div class="feedq">Q${i + 1}</div>
-          <div class="${a.ok ? "feedok" : "feedbad"}">${a.ok ? "✓ Correct" : "✗ +30s"}</div>
+          <div class="${a.ok ? "feedok" : "feedbad"}">${a.ok ? "✓" : "✗ +30s"}</div>
         </div>
-        <div class="feedsub"><b>Sentence:</b> ${escapeHTML(a.q).replace("____", "<b>____</b>")}</div>
-        <div class="feedsub"><b>Your answer:</b> ${escapeHTML(a.chosen)} • <b>Correct:</b> ${escapeHTML(a.correct)}</div>
-        <div class="feedsub">${a.explain}</div>
+        <div class="feedsub"><b>Sentence:</b> ${a.q.replace("____", "<b>____</b>")}</div>
+        <div class="feedsub"><b>Your answer:</b> ${a.chosen} • <b>Correct:</b> ${a.correct}</div>
       `;
-      fbWrap.appendChild(div);
+      fb.appendChild(div);
     });
 
+    buildLevelGrid();
     showScreen("results");
   }
 
-  async function finishClassicRun(staged) {
-    stopTimer();
-    const raw = (now() - state.t0) / 1000;
-    const total = raw + state.penalty;
-
-    if (state.modeId === "duel") return finishDuelLeg(total, raw, state.penalty);
-
-    // Save PB only AFTER finishing
-    if (state.player) {
-      const prev = getBestTime(state.modeId, state.levelId, state.player);
-      if (prev == null || total < prev) setBestTime(state.modeId, state.levelId, state.player, total);
-      refreshBestLinesForPlayer(state.player);
-    }
-
-    // Unlock progression based on PRACTICE ONLY
-    if (state.modeId === "practice") {
-      maybeUnlockNextLevel(state.levelId, total);
-    }
-
-    // Online updates
-    if (fb.enabled && state.player) {
-      await maybeWriteLowerScore(fsDoc(fsClassBestId(state.modeId, state.levelId)), state.player, total);
-
-      if (modeObj().kind === "tower") {
-        await maybeWriteLowerScore(fsDoc(fsChampionId(state.modeId, state.levelId)), state.player, total);
-      }
-    }
-
-    buildLevelGrid();
-
-    if (modeObj().kind === "tower" && fb.enabled) {
-      const ch = state.remoteChampion[keyML(state.modeId, state.levelId)];
-      const title = (ch && total < ch.score) ? "NEW CHAMPION!" : "Champion Tower — Results";
-      showResultsClassic(total, raw, title);
-      return;
-    }
-
-    showResultsClassic(total, raw, "Results");
-  }
-
-  // Pressure mode
-  function startPressure({ playerName, levelId }) {
-    state.player = playerName;
-    state.levelId = levelId;
-
-    state.seed = Math.floor(Math.random() * 1e9);
-    const rnd = mulberry32(state.seed);
-
-    const pool = (SENTENCES[levelId] || []).slice();
-    const idxs = pool.map((_, i) => i);
-    for (let i = idxs.length - 1; i > 0; i--) {
-      const j = Math.floor(rnd() * (i + 1));
-      [idxs[i], idxs[j]] = [idxs[j], idxs[i]];
-    }
-
-    state.items = idxs.map(i => {
-      const it = pool[i];
-      return { text: it.text, answer: it.answer, explain: it.explain, options: makeOptions(levelId, it.answer, rnd) };
-    });
-
-    state.idx = 0;
-    state.answers = [];
-    state.selected = null;
-
-    state.pressure.timeLeft = 90;
-    state.pressure.correct = 0;
-    state.pressure.asked = 0;
-    state.pressure.tPrev = now();
-
-    $("#badgePlayer").textContent = `Player: ${playerName || "—"}`;
-    $("#badgeStage").textContent = "Stage: Survival";
-    $("#microHint").textContent = "Correct +3s • Wrong −30s • Survive as long as you can.";
-
-    stopTimer();
-    tickPressureTimer();
-
-    renderPressureQ();
-    showScreen("game");
-    updatePills();
-  }
-
-  function tickPressureTimer() {
-    const tNow = now();
-    const dt = (tNow - state.pressure.tPrev) / 1000;
-    state.pressure.tPrev = tNow;
-
-    state.pressure.timeLeft -= dt;
-    if (state.pressure.timeLeft <= 0) {
-      state.pressure.timeLeft = 0;
-      $("#timer").textContent = fmtSeconds(state.pressure.timeLeft);
-      $("#penalty").textContent = `Score: ${state.pressure.correct}`;
-      stopTimer();
-      finishPressure();
-      return;
-    }
-
-    $("#timer").textContent = fmtSeconds(state.pressure.timeLeft);
-    $("#penalty").textContent = `Score: ${state.pressure.correct}`;
-    state.raf = requestAnimationFrame(tickPressureTimer);
-  }
-
-  function renderPressureQ() {
-    const q = state.items[state.idx % state.items.length];
-
-    $("#qcount").textContent = `Survival • ${state.pressure.correct} correct`;
-    $("#qdiff").textContent = levelObj().diff;
-
-    $("#prompt").innerHTML = q.text.replace(
-      "____",
-      "<span style=\"background:rgba(255,255,0,.25);padding:0 6px;border-radius:10px\">____</span>"
-    );
-
-    const wrap = $("#options");
-    wrap.innerHTML = "";
-    state.selected = null;
-
-    q.options.forEach(opt => {
-      const b = document.createElement("button");
-      b.className = "opt";
-      b.textContent = opt;
-      b.addEventListener("click", () => {
-        state.selected = opt;
-        $$(".opt").forEach(x => x.classList.toggle("selected", x === b));
-      });
-      wrap.appendChild(b);
-    });
-
-    $("#btnNext").textContent = "Answer";
-  }
-
-  function submitPressure() {
-    const q = state.items[state.idx % state.items.length];
-    const chosen = state.selected;
-    const ok = normAnswer(chosen) === normAnswer(q.answer);
-
-    state.pressure.asked++;
-    if (ok) {
-      state.pressure.correct++;
-      state.pressure.timeLeft += 3;
-    } else {
-      state.pressure.timeLeft -= 30;
-    }
-    state.pressure.timeLeft = clamp(state.pressure.timeLeft, 0, 999);
-
-    state.answers.push({ q: q.text, chosen: chosen || "—", correct: q.answer, ok, explain: q.explain });
-    state.idx++;
-    renderPressureQ();
-  }
-
-  function finishPressure() {
-    $("#resultsTitle").textContent = "Pressure Cooker — Results";
-    $("#resultsSub").innerHTML = `Correct: <b>${state.pressure.correct}</b> • Answered: <b>${state.pressure.asked}</b>`;
-    $("#scoreBig").textContent = `${state.pressure.correct} correct`;
-    $("#scoreMeta").textContent = state.player ? `Player: ${state.player}` : "";
-
-    const fbWrap = $("#feedback");
-    fbWrap.innerHTML = "";
-    state.answers.slice(-10).forEach((a) => {
-      const div = document.createElement("div");
-      div.className = "feeditem";
-      div.innerHTML = `
-        <div class="feedtop">
-          <div class="feedq">Recent</div>
-          <div class="${a.ok ? "feedok" : "feedbad"}">${a.ok ? "✓ +3s" : "✗ −30s"}</div>
-        </div>
-        <div class="feedsub"><b>Sentence:</b> ${escapeHTML(a.q).replace("____", "<b>____</b>")}</div>
-        <div class="feedsub"><b>Your answer:</b> ${escapeHTML(a.chosen)} • <b>Correct:</b> ${escapeHTML(a.correct)}</div>
-        <div class="feedsub">${a.explain}</div>
-      `;
-      fbWrap.appendChild(div);
-    });
-
-    showScreen("results");
-  }
-
-  // Duel mode
-  function startDuel({ nameA, nameB, levelId }) {
-    state.duel.a = nameA;
-    state.duel.b = nameB;
-    state.duel.seed = Math.floor(Math.random() * 1e9);
-    state.duel.step = "A";
-
-    startClassicRun({ playerName: nameA, modeId: "duel", levelId, seedOverride: state.duel.seed, staged: false, badge: "Duel: Player A" });
-  }
-
-  async function finishDuelLeg(total, raw, pen) {
-    showResultsClassic(total, raw, state.duel.step === "A" ? "Player A — leg complete" : "Player B — leg complete");
-
-    if (state.duel.step === "A") {
-      state.duel.aScore = total; state.duel.aRaw = raw; state.duel.aPen = pen;
-      state.duel.step = "B";
-      setTimeout(() => {
-        startClassicRun({ playerName: state.duel.b, modeId: "duel", levelId: state.levelId, seedOverride: state.duel.seed, staged: false, badge: "Duel: Player B" });
-      }, 650);
-      return;
-    }
-
-    state.duel.bScore = total; state.duel.bRaw = raw; state.duel.bPen = pen;
-
-    const a = state.duel.aScore;
-    const b = state.duel.bScore;
-
-    let winner = "Tie";
-    let winScore = null;
-    if (a < b) { winner = state.duel.a; winScore = a; }
-    else if (b < a) { winner = state.duel.b; winScore = b; }
-
-    // Online updates (duel champion + duel class best)
-    if (fb.enabled && winner !== "Tie") {
-      await maybeWriteLowerScore(fsDoc(fsChampionId("duel", state.levelId)), winner, winScore);
-      await maybeWriteLowerScore(fsDoc(fsClassBestId("duel", state.levelId)), winner, winScore);
-    }
-
-    $("#duelTitle").textContent = winner === "Tie" ? "Duel — Tie!" : `Duel winner: ${winner}`;
-    $("#duelSub").textContent = "Fastest total time wins (penalties included).";
-    $("#duelGrid").innerHTML = `
-      <div class="duelcard"><div class="duelname">Player A: ${escapeHTML(state.duel.a)}</div><div class="duelscore">${fmtSeconds(a)}</div></div>
-      <div class="duelcard"><div class="duelname">Player B: ${escapeHTML(state.duel.b)}</div><div class="duelscore">${fmtSeconds(b)}</div></div>
-    `;
-
-    buildLevelGrid();
-    showScreen("duel");
-  }
-
-  // ============================================================
-  // 11) Buttons
-  // ============================================================
   function wireButtons() {
+    $("#btnBackHome1").textContent = "Back";
+    $("#btnBackHome2").textContent = "Back";
+    $("#btnQuit").textContent = "Quit";
+    $("#btnStart").textContent = "Start";
+    $("#btnPlayAgain").textContent = "Play again";
+
     $("#btnBackHome1").addEventListener("click", () => showScreen("home"));
     $("#btnBackHome2").addEventListener("click", () => showScreen("home"));
-    $("#btnBackHome3").addEventListener("click", () => showScreen("home"));
-    $("#btnDuelNext").addEventListener("click", () => showScreen("home"));
     $("#btnQuit").addEventListener("click", () => { stopTimer(); showScreen("home"); });
 
-    $("#btnNext").addEventListener("click", () => {
-      if (modeObj().kind === "pressure") return submitPressure();
-      return submitClassicAnswer(modeObj().kind === "heist");
-    });
-
-    $("#btnPlayAgain").addEventListener("click", () => {
-      const kind = modeObj().kind;
-      if (kind === "pressure") return startPressure({ playerName: state.player || "Player", levelId: state.levelId });
-      if (kind === "duel") return openSetup();
-      return startClassicRun({ playerName: state.player || "Player", modeId: state.modeId, levelId: state.levelId, staged: (kind === "heist"), badge: kind === "tower" ? "Stage: Tower" : "Stage: Classic" });
-    });
-
-    $("#btnStart").addEventListener("click", () => {
-      const m = modeObj();
-      if (m.usesDuel) {
-        const a = normName($("#duelNameA").value) || "Player A";
-        const b = normName($("#duelNameB").value) || "Player B";
-        return startDuel({ nameA: a, nameB: b, levelId: state.levelId });
-      }
-      const name = normName($("#soloName").value) || "Player";
-      state.player = name;
-      refreshBestLinesForPlayer(name);
-
-      if (m.kind === "pressure") return startPressure({ playerName: name, levelId: state.levelId });
-
-      return startClassicRun({ playerName: name, modeId: state.modeId, levelId: state.levelId, staged: (m.kind === "heist"), badge: m.kind === "tower" ? "Stage: Tower" : "Stage: Classic" });
-    });
+    $("#btnStart").addEventListener("click", startGame);
+    $("#btnNext").addEventListener("click", next);
+    $("#btnPlayAgain").addEventListener("click", () => openSetup());
 
     $("#btnResetAll").addEventListener("click", () => {
-      Object.keys(localStorage).forEach(k => { if (k.startsWith("ta_best_v61::") || k.startsWith("ta_")) localStorage.removeItem(k); });
+      Object.keys(localStorage).forEach(k => {
+        if (k.startsWith("TA_")) localStorage.removeItem(k);
+      });
       setUnlockedMax(1);
       buildLevelGrid();
-      alert("Local PBs + unlocks cleared on this device.\nOnline Class Best/Champion remains.");
+      alert("Local progress reset on this device.");
     });
   }
 
-  // ============================================================
-  // 12) Firestore listeners
-  // ============================================================
-  function attachFirestoreListeners() {
-    if (!fb.enabled) return;
-    for (const m of MODES) {
-      for (const lvl of LEVELS) {
-        fb.onSnapshot(fsDoc(fsClassBestId(m.id, lvl.id)), (snap) => {
-          if (!snap.exists()) return;
-          const d = snap.data();
-          if (d && typeof d.name === "string" && typeof d.score === "number") {
-            state.remoteClassBest[keyML(m.id, lvl.id)] = { name: d.name, score: d.score };
-            buildLevelGrid();
-          }
-        });
-
-        if (m.usesChampion) {
-          fb.onSnapshot(fsDoc(fsChampionId(m.id, lvl.id)), (snap) => {
-            if (!snap.exists()) return;
-            const d = snap.data();
-            if (d && typeof d.name === "string" && typeof d.score === "number") {
-              state.remoteChampion[keyML(m.id, lvl.id)] = { name: d.name, score: d.score };
-              buildLevelGrid();
-            }
-          });
-        }
-      }
-    }
-  }
-
-  // ============================================================
-  // 13) Init
-  // ============================================================
-  function restoreDefaults() {
-    const lastMode = localStorage.getItem(K.lastMode);
-    const lastLevel = Number(localStorage.getItem(K.lastLevel));
-
-    state.modeId = (lastMode && MODES.some(m => m.id === lastMode)) ? lastMode : "practice";
-    state.levelId = (Number.isFinite(lastLevel) && lastLevel >= 1 && lastLevel <= 10) ? lastLevel : 1;
-
-    const unlocked = Number(localStorage.getItem(K.unlockedMax));
-    if (!Number.isFinite(unlocked)) setUnlockedMax(1);
-  }
-
-  async function init() {
+  function init() {
     assertDOM();
     cacheScreens();
-    forceButtonLabels();
-    restoreDefaults();
-
     buildModeTiles();
-    updatePills();
 
-    await initFirebaseIfConfigured();
-    if (fb.enabled) attachFirestoreListeners();
-    else console.warn("Firebase not configured — cross-device scores will show 'online off'.");
+    // init unlock storage
+    const n = Number(localStorage.getItem(KEY.unlockedMax));
+    if (!Number.isFinite(n)) setUnlockedMax(1);
 
+    $("#pillLevel").textContent = "Level: —";
     buildLevelGrid();
     wireButtons();
     showScreen("home");

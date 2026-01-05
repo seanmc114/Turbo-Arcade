@@ -1,20 +1,35 @@
-/* Turbo Arcade — WORKING STANDALONE CONNECTORS GAME
-   - Injects its own UI (doesn't rely on existing HTML IDs)
-   - 10 levels, 10 questions
-   - +30s per mistake
-   - Feedback after each level
-   - Locked levels + unlock thresholds
-   - Local PB per level
+/* Turbo Arcade — STANDALONE CONNECTORS (LEGIBLE) + MODES RESTORED
+   - Injects its own UI (won’t die if your HTML changes)
+   - Modes: Practice / Duel / Tower / Pressure / Heist
+   - +30s per mistake (Practice/Duel/Tower/Heist)
+   - Feedback after each run
+   - Practice unlocks levels by time thresholds
+   - Local PB per level (per device)
+   - Crest watermark behind everything
 */
 
 (() => {
   "use strict";
 
-  // ---------- CONFIG ----------
-  const CREST_URL = "crest.png"; // put crest.png in repo root (recommended)
-  const STORAGE_UNLOCK = "TA_UNLOCK_V3";
-  const STORAGE_PB_PREFIX = "TA_PB_V3_L";
+  // =========================
+  // CONFIG
+  // =========================
+  const CREST_URL = "crest.png"; // change if needed: "assets/crest.png"
   const PENALTY_SECONDS = 30;
+
+  const STORAGE = {
+    unlockedMax: "TA_UNLOCK_V4",
+    pb: (modeId, levelId) => `TA_PB_V4_${modeId}_L${levelId}`,
+    towerChamp: (levelId) => `TA_TOWER_CHAMP_V4_L${levelId}` // {name, score}
+  };
+
+  const MODES = [
+    { id: "practice", name: "Practice", tag: "Unlock levels", desc: "Classic timed. +30s per mistake. Unlock next levels here." },
+    { id: "duel", name: "Turbo Duel", tag: "Head-to-head", desc: "Two players, same questions. Fastest wins." },
+    { id: "tower", name: "Champion Tower", tag: "Dethrone", desc: "Beat the champion time to take the crown (this device)." },
+    { id: "pressure", name: "Pressure Cooker", tag: "Survival", desc: "90s start. Correct +3s. Wrong -30s. Score = correct." },
+    { id: "heist", name: "Language Heist", tag: "3 stages", desc: "Same scoring, but stages get harder through the run." },
+  ];
 
   const LEVELS = [
     { id: 1, diff: "Very easy" },
@@ -29,7 +44,7 @@
     { id: 10, diff: "Quite difficult" },
   ];
 
-  // Unlock Level N by beating Level N-1 within this time
+  // Unlock Level N by beating Level N-1 within this time (Practice only)
   const UNLOCK_BY_LEVEL = {
     1: null,
     2: 90,
@@ -56,6 +71,7 @@
     10: ["en cuanto", "dado que", "aun así", "a medida que"],
   };
 
+  // 10 questions per level (exactly)
   const SENTENCES = {
     1: [
       { t: "Quiero té ____ café.", a: "o", w: "Choice → <b>o</b>." },
@@ -179,29 +195,51 @@
     ],
   };
 
-  // ---------- HELPERS ----------
+  // =========================
+  // HELPERS
+  // =========================
   const fmt = (sec) => `${(Math.round(sec * 10) / 10).toFixed(1)}s`;
   const esc = (s) => (s || "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[c]));
   const shuffle = (a) => { for (let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];} return a; };
 
-  const getUnlockedMax = () => {
-    const n = Number(localStorage.getItem(STORAGE_UNLOCK));
+  function getUnlockedMax() {
+    const n = Number(localStorage.getItem(STORAGE.unlockedMax));
     return Number.isFinite(n) ? n : 1;
-  };
-  const setUnlockedMax = (n) => {
+  }
+  function setUnlockedMax(n) {
     const cur = getUnlockedMax();
-    localStorage.setItem(STORAGE_UNLOCK, String(Math.max(cur, n)));
-  };
-  const getPB = (lvl) => {
-    const n = Number(localStorage.getItem(STORAGE_PB_PREFIX + lvl));
+    localStorage.setItem(STORAGE.unlockedMax, String(Math.max(cur, n)));
+  }
+  function getPB(modeId, levelId) {
+    const n = Number(localStorage.getItem(STORAGE.pb(modeId, levelId)));
     return Number.isFinite(n) ? n : null;
-  };
-  const setPB = (lvl, val) => localStorage.setItem(STORAGE_PB_PREFIX + lvl, String(val));
+  }
+  function setPB(modeId, levelId, score) {
+    localStorage.setItem(STORAGE.pb(modeId, levelId), String(score));
+  }
+  function getTowerChamp(levelId) {
+    try {
+      const raw = localStorage.getItem(STORAGE.towerChamp(levelId));
+      if (!raw) return null;
+      const d = JSON.parse(raw);
+      if (!d || typeof d.name !== "string" || typeof d.score !== "number") return null;
+      return d;
+    } catch { return null; }
+  }
+  function setTowerChamp(levelId, champ) {
+    localStorage.setItem(STORAGE.towerChamp(levelId), JSON.stringify(champ));
+  }
 
-  // ---------- STATE ----------
+  // =========================
+  // STATE
+  // =========================
   const state = {
-    level: 1,
-    name: "",
+    modeId: "practice",
+    levelId: 1,
+    aName: "",
+    bName: "",
+    playingWho: "A",     // for duel
+    duelSeed: 0,
     items: [],
     idx: 0,
     selected: null,
@@ -209,53 +247,142 @@
     answers: [],
     t0: 0,
     raf: null,
+    // pressure
+    pressureLeft: 90,
+    pressureCorrect: 0,
+    pressureAsked: 0,
+    pressurePrev: 0,
   };
 
-  // ---------- UI INJECTION ----------
+  // =========================
+  // UI INJECTION (HIGH CONTRAST)
+  // =========================
   function injectUI() {
-    // keep your existing page, but add our own app overlay
     const host = document.createElement("div");
     host.id = "taApp";
     host.innerHTML = `
       <style>
-        #taApp{position:relative;max-width:980px;margin:18px auto;padding:16px 16px 28px;border-radius:18px;
-          background:rgba(255,255,255,.78);backdrop-filter: blur(6px);box-shadow:0 10px 30px rgba(0,0,0,.15);
-          font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;}
-        #taApp h1{margin:0 0 6px;font-size:28px}
-        #taApp .sub{opacity:.75;margin:0 0 12px}
-        #taApp .bar{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 12px}
-        #taApp .pill{padding:6px 10px;border-radius:999px;background:rgba(0,0,0,.06);font-weight:700}
-        #taApp .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
-        #taApp button{cursor:pointer;border:0;border-radius:14px;padding:12px 12px;font-weight:800}
-        #taApp .lvl{background:linear-gradient(135deg, rgba(255,0,150,.15), rgba(0,200,255,.15));}
-        #taApp .lvl.locked{opacity:.45;filter:grayscale(1)}
-        #taApp .lvl small{display:block;opacity:.75;font-weight:700;margin-top:6px}
-        #taApp .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-        #taApp input{padding:10px 12px;border-radius:12px;border:2px solid rgba(0,0,0,.12);font-weight:700}
-        #taApp .card{padding:14px;border-radius:16px;background:rgba(255,255,255,.85);box-shadow:0 8px 20px rgba(0,0,0,.10)}
-        #taApp .prompt{font-size:22px;font-weight:900;margin:10px 0 10px}
-        #taApp .opt{background:rgba(0,0,0,.06)}
-        #taApp .opt.sel{outline:3px solid rgba(0,120,255,.5)}
-        #taApp .actions{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
-        #taApp .primary{background:linear-gradient(135deg, rgba(0,255,170,.25), rgba(255,230,0,.25))}
-        #taApp .danger{background:rgba(255,0,0,.12)}
-        #taApp .feed{display:grid;gap:10px;margin-top:12px}
-        #taApp .fi{padding:12px;border-radius:14px;background:rgba(0,0,0,.04)}
-        #taApp .ok{color:#0a7b2f}
-        #taApp .bad{color:#b00020}
+        :root{
+          --ink:#0b1220;
+          --card: rgba(255,255,255,.90);
+          --stroke: rgba(0,0,0,.12);
+          --shadow: 0 14px 40px rgba(0,0,0,.18);
+        }
         body{
           background-image:url("${CREST_URL}");
           background-repeat:no-repeat;
           background-position:center;
-          background-size: min(70vw, 520px);
+          background-size: min(72vw, 560px);
           background-attachment:fixed;
+        }
+        #taApp{
+          position:relative;
+          max-width:1000px;
+          margin:18px auto;
+          padding:16px 16px 28px;
+          border-radius:22px;
+          background: var(--card);
+          box-shadow: var(--shadow);
+          font-family: system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;
+          color: var(--ink);
+        }
+        #taApp h1{margin:0 0 6px;font-size:30px;letter-spacing:.2px}
+        #taApp .sub{margin:0 0 14px;opacity:.85;font-weight:700}
+        #taApp .bar{display:flex;gap:10px;flex-wrap:wrap;margin:10px 0 14px}
+        #taApp .pill{
+          padding:8px 12px;border-radius:999px;
+          background: rgba(0,0,0,.06);
+          border:1px solid var(--stroke);
+          font-weight:900;
+        }
+
+        #taApp .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between}
+        #taApp .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}
+
+        #taApp button{
+          cursor:pointer;border:1px solid var(--stroke);
+          border-radius:16px;padding:12px 12px;font-weight:1000;
+          color: var(--ink);
+          background: rgba(255,255,255,.92);
+          box-shadow: 0 10px 20px rgba(0,0,0,.10);
+          transition: transform .06s ease, box-shadow .12s ease;
+        }
+        #taApp button:hover{transform: translateY(-1px); box-shadow: 0 14px 28px rgba(0,0,0,.14);}
+        #taApp button:active{transform: translateY(0px);}
+
+        #taApp .tile{
+          background: linear-gradient(135deg, rgba(0,180,255,.22), rgba(255,0,160,.18));
+          border: 1px solid rgba(0,0,0,.10);
+          text-align:left;
+        }
+        #taApp .tile .tTop{display:flex;justify-content:space-between;gap:10px;align-items:center}
+        #taApp .tile .tName{font-size:18px}
+        #taApp .tile .tTag{
+          font-size:12px;padding:6px 10px;border-radius:999px;
+          background: rgba(0,0,0,.10);
+          border:1px solid rgba(0,0,0,.10);
+          font-weight:1000;
+        }
+        #taApp .tile .tDesc{opacity:.9;margin-top:8px;font-weight:800}
+
+        #taApp .lvl{
+          background: linear-gradient(135deg, rgba(255,230,0,.22), rgba(0,255,170,.18));
+          text-align:left;
+        }
+        #taApp .lvl.locked{
+          opacity:.55;
+        }
+        #taApp .lvl .small{display:block;margin-top:6px;opacity:.92;font-weight:900}
+
+        #taApp input{
+          padding:10px 12px;border-radius:14px;border:2px solid rgba(0,0,0,.16);
+          font-weight:900;color:var(--ink); background: rgba(255,255,255,.95);
+        }
+
+        #taApp .card{
+          padding:14px;border-radius:18px;
+          background: rgba(255,255,255,.92);
+          border: 1px solid rgba(0,0,0,.10);
+          box-shadow: 0 10px 24px rgba(0,0,0,.10);
+        }
+
+        #taApp .primary{
+          background: linear-gradient(135deg, rgba(0,255,170,.35), rgba(255,230,0,.30));
+        }
+        #taApp .danger{
+          background: rgba(255,0,0,.14);
+        }
+
+        #taApp .prompt{font-size:24px;font-weight:1100;margin:10px 0 10px}
+        #taApp .opt{
+          background: rgba(0,0,0,.06);
+          text-align:center;
+        }
+        #taApp .opt.sel{
+          outline: 4px solid rgba(0,140,255,.55);
+          background: rgba(0,140,255,.10);
+        }
+
+        #taApp .feed{display:grid;gap:10px;margin-top:14px}
+        #taApp .fi{padding:12px;border-radius:16px;background: rgba(0,0,0,.05);border:1px solid rgba(0,0,0,.08)}
+        #taApp .ok{color:#0a7b2f}
+        #taApp .bad{color:#b00020}
+
+        #taApp .banner{
+          margin-top:10px;
+          padding:10px 12px;
+          border-radius:14px;
+          background: rgba(0,0,0,.06);
+          border:1px solid rgba(0,0,0,.10);
+          font-weight:1000;
         }
       </style>
 
       <h1>Turbo Arcade — Connectors</h1>
-      <p class="sub">10 levels • 10 questions • +${PENALTY_SECONDS}s per mistake • feedback every level</p>
+      <p class="sub">Pick the best joining word. <span style="font-weight:1000">Feedback after every level</span>.</p>
 
       <div class="bar">
+        <div class="pill" id="pillMode">Mode: —</div>
         <div class="pill" id="pillLevel">Level: —</div>
         <div class="pill" id="pillDiff">Difficulty: —</div>
         <div class="pill" id="pillTime">Time: 0.0s</div>
@@ -263,54 +390,73 @@
       </div>
 
       <div id="screenHome" class="card">
-        <div class="row" style="justify-content:space-between;">
-          <div><b>Choose a level</b></div>
-          <button id="resetBtn" class="danger">Reset progress (this device)</button>
+        <div class="row">
+          <div><b style="font-size:18px">Choose a mode</b></div>
+          <button id="resetBtn" class="danger">Reset progress</button>
         </div>
-        <div style="margin:10px 0 0" class="grid" id="levelGrid"></div>
+        <div class="grid" id="modeGrid" style="margin-top:12px"></div>
+
+        <div class="banner" style="margin-top:14px">
+          <span style="opacity:.9">Then choose a level:</span>
+        </div>
+        <div class="grid" id="levelGrid" style="margin-top:12px"></div>
       </div>
 
       <div id="screenSetup" class="card" style="display:none;">
-        <div class="row" style="justify-content:space-between;">
+        <div class="row">
           <div><b id="setupTitle">Setup</b></div>
           <button id="backHome1">Back</button>
         </div>
-        <p class="sub" id="setupSub">Enter a name (optional) and start.</p>
-        <div class="row">
-          <input id="playerName" placeholder="Name (optional)" maxlength="24" />
-          <button id="startBtn" class="primary">Start</button>
+        <p class="sub" id="setupSub">Enter name(s) and start.</p>
+
+        <div id="setupSolo">
+          <div class="row" style="justify-content:flex-start">
+            <input id="nameSolo" placeholder="Name (optional)" maxlength="24" />
+            <button id="startBtn" class="primary">Start</button>
+          </div>
         </div>
+
+        <div id="setupDuel" style="display:none;">
+          <div class="row" style="justify-content:flex-start">
+            <input id="nameA" placeholder="Player A" maxlength="24" />
+            <input id="nameB" placeholder="Player B" maxlength="24" />
+            <button id="startDuelBtn" class="primary">Start Duel</button>
+          </div>
+        </div>
+
+        <div class="banner" id="towerBanner" style="display:none;"></div>
       </div>
 
       <div id="screenGame" class="card" style="display:none;">
-        <div class="row" style="justify-content:space-between;">
+        <div class="row">
           <div><b id="qcount">Q 1 / 10</b></div>
           <button id="quitBtn" class="danger">Quit</button>
         </div>
+        <div class="banner" id="whoBanner" style="margin-top:10px; display:none;"></div>
         <div class="prompt" id="prompt"></div>
         <div class="grid" id="options"></div>
-        <div class="actions">
+        <div class="row" style="justify-content:flex-start; margin-top:10px">
           <button id="nextBtn" class="primary">Next</button>
         </div>
       </div>
 
       <div id="screenResults" class="card" style="display:none;">
-        <div class="row" style="justify-content:space-between;">
+        <div class="row">
           <div><b id="resultsTitle">Results</b></div>
-          <button id="backHome2">Back to Levels</button>
+          <button id="backHome2">Back to Home</button>
         </div>
         <p id="resultsSub" class="sub"></p>
-        <div style="font-size:34px;font-weight:1000;margin:6px 0 10px" id="scoreBig">—</div>
-        <div class="actions">
+        <div style="font-size:36px;font-weight:1100;margin:6px 0 10px" id="scoreBig">—</div>
+        <div class="row" style="justify-content:flex-start">
           <button id="againBtn" class="primary">Play again</button>
         </div>
         <div class="feed" id="feedback"></div>
       </div>
     `;
+
     document.body.prepend(host);
   }
 
-  // ---------- SCREEN SWITCH ----------
   function show(which) {
     const ids = ["screenHome", "screenSetup", "screenGame", "screenResults"];
     ids.forEach(id => {
@@ -319,72 +465,195 @@
     });
   }
 
-  // ---------- TIMER ----------
+  function setPills() {
+    const lvl = LEVELS.find(x => x.id === state.levelId) || LEVELS[0];
+    const mode = MODES.find(x => x.id === state.modeId) || MODES[0];
+    document.getElementById("pillMode").textContent = `Mode: ${mode.name}`;
+    document.getElementById("pillLevel").textContent = `Level: ${state.levelId}`;
+    document.getElementById("pillDiff").textContent = `Difficulty: ${lvl.diff}`;
+  }
+
+  // =========================
+  // TIMER (classic)
+  // =========================
   function stopTimer() {
     if (state.raf) cancelAnimationFrame(state.raf);
     state.raf = null;
   }
-  function tick() {
+  function tickClassic() {
     const t = (performance.now() - state.t0) / 1000;
     document.getElementById("pillTime").textContent = `Time: ${fmt(t)}`;
     document.getElementById("pillPenalty").textContent = `Penalty: +${state.penalty}s`;
-    state.raf = requestAnimationFrame(tick);
+    state.raf = requestAnimationFrame(tickClassic);
   }
 
-  // ---------- BUILD LEVELS ----------
+  // =========================
+  // PRESSURE TIMER
+  // =========================
+  function tickPressure() {
+    const now = performance.now();
+    const dt = (now - state.pressurePrev) / 1000;
+    state.pressurePrev = now;
+
+    state.pressureLeft -= dt;
+    if (state.pressureLeft <= 0) {
+      state.pressureLeft = 0;
+      document.getElementById("pillTime").textContent = `Time: ${fmt(state.pressureLeft)}`;
+      document.getElementById("pillPenalty").textContent = `Score: ${state.pressureCorrect}`;
+      stopTimer();
+      finishPressure();
+      return;
+    }
+
+    document.getElementById("pillTime").textContent = `Time: ${fmt(state.pressureLeft)}`;
+    document.getElementById("pillPenalty").textContent = `Score: ${state.pressureCorrect}`;
+    state.raf = requestAnimationFrame(tickPressure);
+  }
+
+  // =========================
+  // BUILD MODE + LEVEL UI
+  // =========================
+  function buildModes() {
+    const grid = document.getElementById("modeGrid");
+    grid.innerHTML = "";
+
+    MODES.forEach(m => {
+      const btn = document.createElement("button");
+      btn.className = "tile";
+      btn.innerHTML = `
+        <div class="tTop">
+          <div class="tName">${m.name}</div>
+          <div class="tTag">${m.tag}</div>
+        </div>
+        <div class="tDesc">${m.desc}</div>
+      `;
+      btn.onclick = () => {
+        state.modeId = m.id;
+        setPills();
+        buildLevels();
+      };
+      grid.appendChild(btn);
+    });
+  }
+
   function buildLevels() {
     const grid = document.getElementById("levelGrid");
     grid.innerHTML = "";
     const unlockedMax = getUnlockedMax();
 
     LEVELS.forEach(l => {
-      const locked = l.id > unlockedMax;
-      const pb = getPB(l.id);
+      const locked = (state.modeId === "practice") ? (l.id > unlockedMax) : false; // only practice locks
+      const pb = getPB(state.modeId, l.id);
       const need = UNLOCK_BY_LEVEL[l.id];
+
+      const champ = (state.modeId === "tower") ? getTowerChamp(l.id) : null;
 
       const btn = document.createElement("button");
       btn.className = "lvl" + (locked ? " locked" : "");
       btn.innerHTML = `
         <div style="font-size:18px;">Level ${l.id}</div>
-        <small>${l.diff}</small>
-        <small>Your PB: ${pb == null ? "—" : fmt(pb)}</small>
-        <small>${locked ? `Locked • unlock: ≤ ${need}s` : "Unlocked"}</small>
+        <span class="small">${l.diff}</span>
+        ${state.modeId === "tower"
+          ? `<span class="small">Champion: ${champ ? `<b>${esc(champ.name)}</b> — ${fmt(champ.score)}` : "—"}</span>`
+          : ""}
+        <span class="small">Your PB: ${pb == null ? "—" : fmt(pb)}</span>
+        ${state.modeId === "practice"
+          ? `<span class="small">${locked ? `Locked • unlock: ≤ ${need}s` : "Unlocked"}</span>`
+          : `<span class="small">Tap to play</span>`
+        }
       `;
 
       btn.onclick = () => {
         if (locked) {
-          alert(`Locked.\nUnlock Level ${l.id} by beating Level ${l.id - 1} in ≤ ${need}s.`);
+          alert(`Locked.\nUnlock Level ${l.id} by beating Level ${l.id - 1} in ≤ ${need}s (Practice).`);
           return;
         }
-        state.level = l.id;
-        const lvl = LEVELS.find(x => x.id === state.level);
-        document.getElementById("pillLevel").textContent = `Level: ${state.level}`;
-        document.getElementById("pillDiff").textContent = `Difficulty: ${lvl.diff}`;
-        document.getElementById("setupTitle").textContent = `Level ${state.level} — ${lvl.diff}`;
-        show("screenSetup");
+        state.levelId = l.id;
+        setPills();
+        openSetup();
       };
 
       grid.appendChild(btn);
     });
   }
 
-  // ---------- GAME PLAY ----------
-  function buildQuestion() {
+  // =========================
+  // SETUP SCREEN
+  // =========================
+  function openSetup() {
+    const lvl = LEVELS.find(x => x.id === state.levelId);
+    const mode = MODES.find(x => x.id === state.modeId);
+
+    document.getElementById("setupTitle").textContent = `${mode.name} — Level ${state.levelId} (${lvl.diff})`;
+
+    // tower banner
+    const towerBanner = document.getElementById("towerBanner");
+    if (state.modeId === "tower") {
+      const champ = getTowerChamp(state.levelId);
+      towerBanner.style.display = "block";
+      towerBanner.innerHTML = champ
+        ? `Champion to beat: <b>${esc(champ.name)}</b> — <b>${fmt(champ.score)}</b>`
+        : `No champion yet. Set the first crown!`;
+    } else {
+      towerBanner.style.display = "none";
+      towerBanner.innerHTML = "";
+    }
+
+    // duel vs solo
+    const solo = document.getElementById("setupSolo");
+    const duel = document.getElementById("setupDuel");
+
+    if (state.modeId === "duel") {
+      solo.style.display = "none";
+      duel.style.display = "block";
+      document.getElementById("setupSub").textContent = "Enter two names. Player A plays first, then Player B plays the same questions.";
+    } else {
+      solo.style.display = "block";
+      duel.style.display = "none";
+      document.getElementById("setupSub").textContent = state.modeId === "pressure"
+        ? "Enter your name. 90s survival: correct +3s, wrong -30s."
+        : "Enter your name (optional). Score saves after you finish.";
+    }
+
+    show("screenSetup");
+  }
+
+  // =========================
+  // QUESTION BUILDING
+  // =========================
+  function makeOptions(correct, levelId) {
+    const pool = CONNECTORS[levelId];
+    const opts = new Set([correct]);
+    while (opts.size < 4) opts.add(pool[Math.floor(Math.random() * pool.length)]);
+    return shuffle([...opts]);
+  }
+
+  function renderClassicQuestion() {
     const q = state.items[state.idx];
     document.getElementById("qcount").textContent = `Q ${state.idx + 1} / 10`;
-    document.getElementById("prompt").innerHTML =
-      esc(q.t).replace("____", `<span style="background:rgba(255,255,0,.25);padding:0 8px;border-radius:12px;">____</span>`);
 
-    const pool = CONNECTORS[state.level].slice();
-    const opts = new Set([q.a]);
-    while (opts.size < 4) opts.add(pool[Math.floor(Math.random() * pool.length)]);
-    const arr = shuffle([...opts]);
+    // stage label for heist
+    const whoBanner = document.getElementById("whoBanner");
+    if (state.modeId === "duel") {
+      whoBanner.style.display = "block";
+      whoBanner.textContent = `Duel: Player ${state.playingWho} — ${state.playingWho === "A" ? state.aName : state.bName}`;
+    } else if (state.modeId === "heist") {
+      whoBanner.style.display = "block";
+      const stage = state.idx <= 2 ? 1 : (state.idx <= 6 ? 2 : 3);
+      whoBanner.textContent = `Heist Stage ${stage}/3`;
+    } else {
+      whoBanner.style.display = "none";
+      whoBanner.textContent = "";
+    }
+
+    document.getElementById("prompt").innerHTML =
+      esc(q.t).replace("____", `<span style="background:rgba(255,255,0,.35);padding:0 8px;border-radius:12px;">____</span>`);
 
     const wrap = document.getElementById("options");
     wrap.innerHTML = "";
     state.selected = null;
 
-    arr.forEach(opt => {
+    q.opts.forEach(opt => {
       const b = document.createElement("button");
       b.className = "opt";
       b.textContent = opt;
@@ -399,131 +668,364 @@
     document.getElementById("nextBtn").textContent = (state.idx === 9) ? "Finish" : "Next";
   }
 
-  function startGame() {
-    state.name = (document.getElementById("playerName").value || "").trim().slice(0, 24);
+  function startClassicRun(name, seed = null) {
+    // build fixed 10 items
+    const base = SENTENCES[state.levelId].slice();
+    if (seed != null) {
+      // deterministic shuffle for duel
+      const rnd = mulberry32(seed);
+      for (let i = base.length - 1; i > 0; i--) {
+        const j = Math.floor(rnd() * (i + 1));
+        [base[i], base[j]] = [base[j], base[i]];
+      }
+    } else {
+      shuffle(base);
+    }
 
-    state.items = shuffle(SENTENCES[state.level].slice()); // exactly 10
+    state.items = base.map(q => ({
+      ...q,
+      opts: makeOptions(q.a, state.levelId),
+    }));
+
     state.idx = 0;
-    state.selected = null;
     state.penalty = 0;
     state.answers = [];
+    state.selected = null;
 
+    // timer
     state.t0 = performance.now();
     stopTimer();
-    tick();
+    tickClassic();
 
+    // reset pills
+    document.getElementById("pillTime").textContent = "Time: 0.0s";
+    document.getElementById("pillPenalty").textContent = "Penalty: +0s";
+
+    // game screen
     show("screenGame");
-    buildQuestion();
+    renderClassicQuestion();
   }
 
-  function next() {
+  function submitClassicAnswer() {
     const q = state.items[state.idx];
     const chosen = state.selected || "—";
     const ok = chosen.toLowerCase() === q.a.toLowerCase();
     if (!ok) state.penalty += PENALTY_SECONDS;
 
     state.answers.push({ q: q.t, chosen, correct: q.a, ok, why: q.w });
-    state.idx++;
 
-    if (state.idx >= 10) finish();
-    else buildQuestion();
+    state.idx++;
+    if (state.idx >= 10) finishClassic();
+    else renderClassicQuestion();
   }
 
-  function finish() {
+  function finishClassic() {
     stopTimer();
     const raw = (performance.now() - state.t0) / 1000;
     const total = raw + state.penalty;
-    const mistakes = state.answers.filter(x => !x.ok).length;
+    const mistakes = state.answers.filter(a => !a.ok).length;
 
-    // PB
-    const prev = getPB(state.level);
+    // PB save
+    const pbKeyMode = state.modeId; // separate PBs per mode
+    const prev = getPB(pbKeyMode, state.levelId);
     const isPB = (prev == null || total < prev);
-    if (isPB) setPB(state.level, total);
+    if (isPB) setPB(pbKeyMode, state.levelId, total);
 
-    // Unlock next
-    const nextLevel = state.level + 1;
+    // Unlock (practice only)
     let unlockMsg = "";
-    if (nextLevel <= 10) {
-      const need = UNLOCK_BY_LEVEL[nextLevel];
-      if (total <= need) {
-        setUnlockedMax(nextLevel);
-        unlockMsg = `✅ UNLOCKED Level ${nextLevel} (≤ ${need}s)`;
+    if (state.modeId === "practice") {
+      const next = state.levelId + 1;
+      if (next <= 10) {
+        const need = UNLOCK_BY_LEVEL[next];
+        if (total <= need) {
+          setUnlockedMax(next);
+          unlockMsg = `✅ <b>Unlocked Level ${next}</b> (≤ ${need}s)`;
+        } else {
+          unlockMsg = `🔒 Next unlock: Level ${next} requires ≤ <b>${need}s</b>`;
+        }
       } else {
-        unlockMsg = `🔒 To unlock Level ${nextLevel}: beat ≤ ${need}s`;
+        unlockMsg = "🏁 Completed Level 10!";
       }
-    } else {
-      unlockMsg = "🏁 Completed Level 10!";
     }
 
-    // Results header
-    document.getElementById("resultsTitle").textContent = `Level ${state.level} — Results`;
-    document.getElementById("resultsSub").innerHTML =
-      `Base: <b>${fmt(raw)}</b> • Mistakes: <b>${mistakes}</b> • Penalty: <b>${state.penalty}s</b><br>${unlockMsg}${isPB ? "<br>🏅 <b>New PB!</b>" : ""}`;
-    document.getElementById("scoreBig").textContent = fmt(total);
+    // Tower champion logic (local)
+    let towerMsg = "";
+    if (state.modeId === "tower") {
+      const champ = getTowerChamp(state.levelId);
+      if (!champ || total < champ.score) {
+        const name = (state.aName || "").trim() || "Champion";
+        setTowerChamp(state.levelId, { name, score: total });
+        towerMsg = `👑 <b>New Champion!</b> (${esc(name)} — ${fmt(total)})`;
+      } else {
+        towerMsg = `👑 Champion still holds: <b>${esc(champ.name)}</b> — ${fmt(champ.score)}`;
+      }
+    }
 
-    // Feedback list (ESSENTIAL)
+    // Duel flow
+    if (state.modeId === "duel") {
+      if (state.playingWho === "A") {
+        // store A result, then switch to B
+        state.duelA = { total, raw, pen: state.penalty, mistakes, answers: state.answers };
+        state.playingWho = "B";
+        // start B with same seed + same items order
+        startClassicRun(state.bName, state.duelSeed);
+        return;
+      } else {
+        // finish duel, compare
+        state.duelB = { total, raw, pen: state.penalty, mistakes, answers: state.answers };
+        showDuelResults();
+        return;
+      }
+    }
+
+    // Normal results
+    showResults({
+      title: `${modeName()} — Level ${state.levelId} Results`,
+      sub: `Base: <b>${fmt(raw)}</b> • Mistakes: <b>${mistakes}</b> • Penalty: <b>${state.penalty}s</b>${isPB ? " • 🏅 <b>New PB!</b>" : ""}`
+        + (unlockMsg ? `<br>${unlockMsg}` : "")
+        + (towerMsg ? `<br>${towerMsg}` : ""),
+      big: fmt(total),
+      answers: state.answers,
+    });
+
+    buildLevels();
+  }
+
+  function showDuelResults() {
+    const a = state.duelA.total;
+    const b = state.duelB.total;
+    let winner = "Tie";
+    if (a < b) winner = `Winner: ${esc(state.aName)} (A)`;
+    else if (b < a) winner = `Winner: ${esc(state.bName)} (B)`;
+
+    const title = `Turbo Duel — Level ${state.levelId}`;
+    const sub = `${winner}<br>
+      A: <b>${fmt(a)}</b> (pen ${state.duelA.pen}s) • B: <b>${fmt(b)}</b> (pen ${state.duelB.pen}s)`;
+
+    // Merge feedback: show A then B
+    const merged = [
+      ...state.duelA.answers.map((x, i) => ({ ...x, label: `A • Q${i+1}` })),
+      ...state.duelB.answers.map((x, i) => ({ ...x, label: `B • Q${i+1}` })),
+    ];
+
+    showResults({
+      title,
+      sub,
+      big: `A ${fmt(a)}  |  B ${fmt(b)}`,
+      answers: merged,
+      labelMode: true
+    });
+
+    // reset duel state
+    state.playingWho = "A";
+    buildLevels();
+  }
+
+  function showResults({ title, sub, big, answers, labelMode=false }) {
+    document.getElementById("resultsTitle").textContent = title;
+    document.getElementById("resultsSub").innerHTML = sub;
+    document.getElementById("scoreBig").textContent = big;
+
     const fb = document.getElementById("feedback");
     fb.innerHTML = "";
-    state.answers.forEach((a, i) => {
+
+    answers.forEach((a, i) => {
       const div = document.createElement("div");
       div.className = "fi";
+      const leftLabel = labelMode ? `<b>${a.label || `Q${i+1}`}</b>` : `<b>Q${i+1}</b>`;
       div.innerHTML = `
         <div style="display:flex;justify-content:space-between;gap:10px;">
-          <b>Q${i + 1}</b>
+          ${leftLabel}
           <b class="${a.ok ? "ok" : "bad"}">${a.ok ? "✓ Correct" : `✗ +${PENALTY_SECONDS}s`}</b>
         </div>
-        <div style="margin-top:6px;"><b>Sentence:</b> ${esc(a.q).replace("____", "<b>____</b>")}</div>
+        <div style="margin-top:6px;"><b>Sentence:</b> ${esc(a.q).replace("____","<b>____</b>")}</div>
         <div><b>Your answer:</b> ${esc(a.chosen)} • <b>Correct:</b> ${esc(a.correct)}</div>
-        <div style="opacity:.8;margin-top:4px;">${a.why || ""}</div>
+        <div style="opacity:.85;margin-top:4px;">${a.why || ""}</div>
       `;
       fb.appendChild(div);
     });
 
-    buildLevels();
     show("screenResults");
     document.getElementById("screenResults").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  // ---------- WIRING ----------
+  // =========================
+  // PRESSURE MODE
+  // =========================
+  function startPressure(name) {
+    const base = SENTENCES[state.levelId].slice();
+    shuffle(base);
+    state.items = base.map(q => ({ ...q, opts: makeOptions(q.a, state.levelId) }));
+
+    state.idx = 0;
+    state.selected = null;
+    state.answers = [];
+    state.pressureLeft = 90;
+    state.pressureCorrect = 0;
+    state.pressureAsked = 0;
+
+    stopTimer();
+    state.pressurePrev = performance.now();
+    tickPressure();
+
+    // pills show score in "Penalty" slot
+    document.getElementById("pillTime").textContent = `Time: ${fmt(state.pressureLeft)}`;
+    document.getElementById("pillPenalty").textContent = `Score: 0`;
+
+    show("screenGame");
+    renderPressureQuestion();
+  }
+
+  function renderPressureQuestion() {
+    const q = state.items[state.idx % state.items.length];
+    document.getElementById("qcount").textContent = `Survival • Correct: ${state.pressureCorrect}`;
+    document.getElementById("whoBanner").style.display = "block";
+    document.getElementById("whoBanner").textContent = `Correct +3s • Wrong -30s`;
+
+    document.getElementById("prompt").innerHTML =
+      esc(q.t).replace("____", `<span style="background:rgba(255,255,0,.35);padding:0 8px;border-radius:12px;">____</span>`);
+
+    const wrap = document.getElementById("options");
+    wrap.innerHTML = "";
+    state.selected = null;
+
+    q.opts.forEach(opt => {
+      const b = document.createElement("button");
+      b.className = "opt";
+      b.textContent = opt;
+      b.onclick = () => {
+        state.selected = opt;
+        [...wrap.children].forEach(x => x.classList.remove("sel"));
+        b.classList.add("sel");
+      };
+      wrap.appendChild(b);
+    });
+
+    document.getElementById("nextBtn").textContent = "Answer";
+  }
+
+  function submitPressureAnswer() {
+    const q = state.items[state.idx % state.items.length];
+    const chosen = state.selected || "—";
+    const ok = chosen.toLowerCase() === q.a.toLowerCase();
+
+    state.pressureAsked++;
+    if (ok) {
+      state.pressureCorrect++;
+      state.pressureLeft += 3;
+    } else {
+      state.pressureLeft -= 30;
+    }
+    if (state.pressureLeft < 0) state.pressureLeft = 0;
+
+    document.getElementById("pillPenalty").textContent = `Score: ${state.pressureCorrect}`;
+
+    state.answers.push({ q: q.t, chosen, correct: q.a, ok, why: q.w });
+    state.idx++;
+    renderPressureQuestion();
+  }
+
+  function finishPressure() {
+    const title = `Pressure Cooker — Level ${state.levelId}`;
+    const sub = `Correct: <b>${state.pressureCorrect}</b> • Answered: <b>${state.pressureAsked}</b>`;
+    const big = `${state.pressureCorrect} correct`;
+
+    // show last 10 for feedback
+    const recent = state.answers.slice(-10);
+
+    showResults({ title, sub, big, answers: recent });
+    buildLevels();
+  }
+
+  // =========================
+  // MODE START
+  // =========================
+  function modeName() {
+    return (MODES.find(m => m.id === state.modeId)?.name) || "Game";
+  }
+
+  function startFromSetup() {
+    const mode = state.modeId;
+
+    if (mode === "duel") {
+      state.aName = (document.getElementById("nameA").value || "").trim().slice(0, 24) || "Player A";
+      state.bName = (document.getElementById("nameB").value || "").trim().slice(0, 24) || "Player B";
+      state.playingWho = "A";
+      state.duelSeed = Math.floor(Math.random() * 1e9);
+      startClassicRun(state.aName, state.duelSeed);
+      return;
+    }
+
+    state.aName = (document.getElementById("nameSolo").value || "").trim().slice(0, 24) || "Player";
+
+    if (mode === "pressure") {
+      startPressure(state.aName);
+      return;
+    }
+
+    // practice / tower / heist are classic timed
+    startClassicRun(state.aName, null);
+  }
+
+  // deterministic RNG for duel shuffle
+  function mulberry32(seed) {
+    let t = seed >>> 0;
+    return function() {
+      t += 0x6D2B79F5;
+      let r = Math.imul(t ^ (t >>> 15), 1 | t);
+      r ^= r + Math.imul(r ^ (r >>> 7), 61 | r);
+      return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  // =========================
+  // WIRE BUTTONS
+  // =========================
   function wire() {
     document.getElementById("backHome1").onclick = () => show("screenHome");
     document.getElementById("backHome2").onclick = () => show("screenHome");
     document.getElementById("quitBtn").onclick = () => { stopTimer(); show("screenHome"); };
-    document.getElementById("startBtn").onclick = startGame;
-    document.getElementById("nextBtn").onclick = next;
-    document.getElementById("againBtn").onclick = () => show("screenSetup");
+
+    document.getElementById("startBtn").onclick = startFromSetup;
+    document.getElementById("startDuelBtn").onclick = startFromSetup;
+
+    document.getElementById("nextBtn").onclick = () => {
+      if (state.modeId === "pressure") return submitPressureAnswer();
+      return submitClassicAnswer();
+    };
+
+    document.getElementById("againBtn").onclick = () => openSetup();
+
     document.getElementById("resetBtn").onclick = () => {
-      if (!confirm("Reset progress + PBs on THIS device?")) return;
+      if (!confirm("Reset progress + PBs + tower champions on THIS device?")) return;
+
       Object.keys(localStorage).forEach(k => {
-        if (k === STORAGE_UNLOCK || k.startsWith(STORAGE_PB_PREFIX)) localStorage.removeItem(k);
+        if (k === STORAGE.unlockedMax) localStorage.removeItem(k);
+        if (k.startsWith("TA_PB_V4_")) localStorage.removeItem(k);
+        if (k.startsWith("TA_TOWER_CHAMP_V4_")) localStorage.removeItem(k);
       });
+
       setUnlockedMax(1);
       buildLevels();
       alert("Reset done.");
     };
   }
 
-  // ---------- INIT ----------
+  // =========================
+  // INIT
+  // =========================
   function init() {
-    try {
-      injectUI();
+    injectUI();
 
-      // initialise unlock
-      const u = getUnlockedMax();
-      if (!Number.isFinite(u) || u < 1) setUnlockedMax(1);
+    // ensure unlock exists
+    const u = getUnlockedMax();
+    if (!Number.isFinite(u) || u < 1) setUnlockedMax(1);
 
-      // default level display
-      const lvl = LEVELS.find(x => x.id === state.level);
-      document.getElementById("pillLevel").textContent = `Level: ${state.level}`;
-      document.getElementById("pillDiff").textContent = `Difficulty: ${lvl.diff}`;
-
-      buildLevels();
-      wire();
-      show("screenHome");
-    } catch (e) {
-      alert("Turbo Arcade error: " + (e?.message || e));
-      console.error(e);
-    }
+    setPills();
+    buildModes();
+    buildLevels();
+    wire();
+    show("screenHome");
   }
 
   window.addEventListener("DOMContentLoaded", init);

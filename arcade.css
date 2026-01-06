@@ -1,0 +1,89 @@
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap');
+
+body {
+  margin: 0;
+  font-family: 'Poppins', sans-serif;
+  color: #fff;
+  background: radial-gradient(circle at top, #111 0%, #000 100%);
+  min-height: 100vh;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  position: relative;
+}
+
+/* --- crest watermark --- */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: url("https://github.com/seanmc114/Connections/blob/main/crest.png?raw=true")
+              no-repeat center center;
+  background-size: 45vmin;
+  opacity: 0.08;
+  pointer-events: none;
+  z-index: 0;
+}
+
+header {
+  text-align: center;
+  margin-top: 2rem;
+  z-index: 1;
+}
+
+h1 {
+  font-size: 3rem;
+  letter-spacing: 1px;
+  text-shadow: 0 0 10px #f00, 0 0 25px #0ff;
+  margin-bottom: 0.3rem;
+}
+
+.tagline {
+  font-size: 1.1rem;
+  color: #ccc;
+}
+
+.arcade-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1.5rem;
+  width: 90%;
+  max-width: 1000px;
+  margin: 3rem auto;
+  z-index: 1;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  border-radius: 15px;
+  padding: 1.5rem;
+  text-decoration: none;
+  color: #fff;
+  text-align: center;
+  transition: all 0.3s ease;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 0 15px rgba(0, 0, 0, 0.4);
+}
+
+.card:hover {
+  transform: translateY(-6px);
+  border-color: #0ff;
+  box-shadow: 0 0 25px #0ff;
+}
+
+.card.disabled {
+  opacity: 0.35;
+  cursor: default;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+footer {
+  text-align: center;
+  font-size: 0.9rem;
+  color: #aaa;
+  margin-bottom: 1rem;
+  z-index: 1;
+}
